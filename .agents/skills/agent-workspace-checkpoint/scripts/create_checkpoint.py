@@ -1,0 +1,283 @@
+#!/usr/bin/env python3
+"""Create a sanitized, immutable agent workspace checkpoint."""
+
+from __future__ import annotations
+
+import argparse
+import io
+import json
+import os
+import tarfile
+import urllib.error
+import urllib.request
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+from checkpoint_lib import (
+    FORMAT_VERSION,
+    json_bytes,
+    safe_slug,
+    select_files,
+    sha256_file,
+)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, required=True, help="Project directory")
+    parser.add_argument("--label", default="agent-handoff")
+    parser.add_argument("--handoff-file", type=Path)
+    parser.add_argument("--parent")
+    parser.add_argument("--source-agent", default=os.environ.get("RELAY_SOURCE_AGENT", "Agent skill"))
+    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--write-gitignore", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--upload", action="store_true")
+    parser.add_argument("--api-url", default=os.environ.get("RELAY_API_URL"))
+    parser.add_argument("--api-token", default=os.environ.get("RELAY_API_TOKEN"))
+    parser.add_argument("--json", action="store_true", dest="json_output")
+    return parser.parse_args()
+
+
+def add_bytes(archive: tarfile.TarFile, name: str, data: bytes, mode: int = 0o644) -> None:
+    info = tarfile.TarInfo(name)
+    info.size = len(data)
+    info.mode = mode
+    info.mtime = 0
+    archive.addfile(info, io.BytesIO(data))
+
+
+def main() -> int:
+    args = parse_args()
+    root = args.root.expanduser().resolve()
+    included, excluded, context = select_files(root)
+    created_at = datetime.now(timezone.utc).isoformat()
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    checkpoint_id = f"cp_{context['treeHash'][:12]}_{timestamp}"
+    label = args.label.strip() or "agent-handoff"
+    output_dir = (
+        args.output_dir.expanduser()
+        if args.output_dir
+        else Path.home() / ".agent-checkpoints" / safe_slug(root.name)
+    )
+    archive_path = output_dir / f"{timestamp}-{safe_slug(label)}.tar.gz"
+    if args.upload and (not args.api_url or not args.api_token):
+        raise SystemExit(
+            "Upload requires RELAY_API_URL and RELAY_API_TOKEN "
+            "(or --api-url and --api-token)."
+        )
+
+    handoff_text = (
+        args.handoff_file.read_text(encoding="utf-8")
+        if args.handoff_file
+        else "Continue from this checkpoint. Inspect repository instructions and validation state before editing."
+    )
+    manifest = {
+        "formatVersion": FORMAT_VERSION,
+        "checkpointId": checkpoint_id,
+        "createdAt": created_at,
+        "workspace": root.name,
+        "root": ".",
+        "label": label,
+        "sourceAgent": args.source_agent,
+        "baseSnapshot": args.parent,
+        "treeHash": f"sha256:{context['treeHash']}",
+        "stacks": context["stacks"],
+        "git": context["git"],
+        "files": [
+            {
+                "path": item.path,
+                "size": item.size,
+                "mode": item.mode,
+                "sha256": f"sha256:{item.sha256}",
+            }
+            for item in included
+        ],
+        "exclusions": [{"path": item.path, "reason": item.reason} for item in excluded],
+    }
+    handoff = "\n".join(
+        [
+            f"# {label}",
+            "",
+            f"- Workspace: **{root.name}**",
+            f"- Created: {created_at}",
+            f"- Created by: **{args.source_agent}**",
+            f"- Parent checkpoint: {args.parent or 'none'}",
+            f"- Included: {len(included)} files",
+            f"- Excluded: {len(excluded)} files",
+            f"- Tree hash: `sha256:{context['treeHash']}`",
+            "",
+            "## Current objective and next steps",
+            "",
+            handoff_text.strip(),
+            "",
+            "## Restore checklist",
+            "",
+            "1. Read repository instructions such as `AGENTS.md` or `CLAUDE.md`.",
+            "2. Reinstall dependencies from the committed lockfile.",
+            "3. Run the project validation commands before editing.",
+            "4. Create a child checkpoint after completing the handoff.",
+            "",
+        ]
+    )
+
+    if args.write_gitignore and not (root / ".gitignore").exists():
+        (root / ".gitignore").write_text("\n".join(context["inferredRules"]) + "\n", encoding="utf-8")
+
+    summary = {
+        "checkpointId": checkpoint_id,
+        "archive": None if args.dry_run else str(archive_path),
+        "includedFiles": len(included),
+        "includedBytes": sum(item.size for item in included),
+        "excludedFiles": len(excluded),
+        "stacks": context["stacks"],
+        "treeHash": f"sha256:{context['treeHash']}",
+        "dryRun": args.dry_run,
+        "uploaded": False,
+        "exclusions": [{"path": item.path, "reason": item.reason} for item in excluded],
+    }
+
+    if not args.dry_run:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(archive_path, "w:gz", format=tarfile.PAX_FORMAT) as archive:
+            for item in included:
+                info = tarfile.TarInfo(item.path)
+                info.size = item.size
+                info.mode = item.mode
+                info.mtime = 0
+                with item.source.open("rb") as source:
+                    archive.addfile(info, source)
+            add_bytes(archive, ".agent-checkpoint/manifest.json", json_bytes(manifest))
+            add_bytes(archive, ".agent-checkpoint/HANDOFF.md", handoff.encode("utf-8"))
+            add_bytes(
+                archive,
+                ".agent-checkpoint/inferred.gitignore",
+                ("\n".join(context["inferredRules"]) + "\n").encode("utf-8"),
+            )
+            add_bytes(
+                archive,
+                ".agent-checkpoint/README.md",
+                b"# Agent workspace checkpoint\n\nRead HANDOFF.md before editing. Verify manifest hashes when restoring.\n",
+            )
+        archive_hash = sha256_file(archive_path)
+        sidecar = archive_path.with_name(archive_path.name + ".sha256")
+        sidecar.write_text(f"{archive_hash}  {archive_path.name}\n", encoding="utf-8")
+        summary["archiveSha256"] = f"sha256:{archive_hash}"
+        summary["sidecar"] = str(sidecar)
+        if args.upload:
+            upload_result = upload_checkpoint(
+                archive_path=archive_path,
+                api_url=args.api_url,
+                api_token=args.api_token,
+                checkpoint_id=checkpoint_id,
+                workspace_name=root.name,
+                label=label,
+                source_agent=args.source_agent,
+                parent_id=args.parent,
+                handoff=handoff_text.strip(),
+                checksum=summary["archiveSha256"],
+                file_count=len(included),
+                excluded_count=len(excluded),
+            )
+            summary["uploaded"] = True
+            summary["relay"] = upload_result
+
+    if args.json_output:
+        print(json.dumps(summary, indent=2))
+    else:
+        verb = "Would include" if args.dry_run else "Created"
+        print(f"{verb} {len(included)} files; excluded {len(excluded)} files.")
+        print(f"Tree hash: {summary['treeHash']}")
+        if not args.dry_run:
+            print(f"Archive: {archive_path}")
+            print(f"Checksum: {summary['archiveSha256']}")
+            if summary["uploaded"]:
+                print(f"Relay checkpoint: {summary['relay']['checkpoint']['id']}")
+        if excluded:
+            print("Excluded:")
+            for item in excluded[:40]:
+                print(f"  - {item.path}: {item.reason}")
+            if len(excluded) > 40:
+                print(f"  … and {len(excluded) - 40} more")
+    return 0
+
+
+def upload_checkpoint(
+    *,
+    archive_path: Path,
+    api_url: str,
+    api_token: str,
+    checkpoint_id: str,
+    workspace_name: str,
+    label: str,
+    source_agent: str,
+    parent_id: str | None,
+    handoff: str,
+    checksum: str,
+    file_count: int,
+    excluded_count: int,
+) -> dict[str, object]:
+    boundary = f"----relay-{uuid.uuid4().hex}"
+    fields = {
+        "checkpointId": checkpoint_id,
+        "workspaceName": workspace_name,
+        "label": label,
+        "sourceAgent": source_agent,
+        "parentId": parent_id or "",
+        "handoff": handoff,
+        "checksum": checksum,
+        "fileCount": str(file_count),
+        "excludedCount": str(excluded_count),
+    }
+    parts: list[bytes] = []
+    for name, value in fields.items():
+        parts.extend(
+            [
+                f"--{boundary}\r\n".encode(),
+                f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode(),
+                value.encode("utf-8"),
+                b"\r\n",
+            ]
+        )
+    parts.extend(
+        [
+            f"--{boundary}\r\n".encode(),
+            (
+                'Content-Disposition: form-data; name="archive"; '
+                f'filename="{archive_path.name}"\r\n'
+            ).encode(),
+            b"Content-Type: application/gzip\r\n\r\n",
+            archive_path.read_bytes(),
+            b"\r\n",
+            f"--{boundary}--\r\n".encode(),
+        ]
+    )
+    body = b"".join(parts)
+    endpoint = api_url.rstrip("/") + "/api/checkpoints"
+    request = urllib.request.Request(
+        endpoint,
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_token}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "Content-Length": str(len(body)),
+            "User-Agent": "relay-agent-workspace-checkpoint/1",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace")
+        raise SystemExit(f"Relay upload failed ({error.code}): {detail}") from error
+    except urllib.error.URLError as error:
+        raise SystemExit(f"Relay upload failed: {error.reason}") from error
+    if not isinstance(payload, dict) or "checkpoint" not in payload:
+        raise SystemExit("Relay upload returned an invalid response")
+    return payload
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

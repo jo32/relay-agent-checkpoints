@@ -1,0 +1,4 @@
+interface:
+  display_name: "Restore Agent Workspace"
+  short_description: "Download and safely restore Relay checkpoints"
+  default_prompt: "Use $restore-agent-workspace to download a Relay checkpoint and extract it into a new workspace."
