@@ -494,10 +494,10 @@ function CheckpointsView({
       />
 
       <section className="stat-grid" aria-label="Workspace overview">
-        <Stat label="Checkpoints" value={String(allCheckpoints.length)} icon={Archive} tone="lavender" />
-        <Stat label="Workspaces" value={String(workspaceCount)} icon={Folder} tone="peach" />
-        <Stat label="Archive storage" value={formatBytes(totalBytes)} icon={HardDrive} tone="sky" />
-        <Stat label="Files excluded" value={formatNumber(protectedFiles)} icon={ShieldCheck} tone="mint" />
+        <Stat label="Checkpoints" value={String(allCheckpoints.length)} icon={Archive} tone="clay" />
+        <Stat label="Workspaces" value={String(workspaceCount)} icon={Folder} tone="ochre" />
+        <Stat label="Archive storage" value={formatBytes(totalBytes)} icon={HardDrive} tone="ocean" />
+        <Stat label="Files excluded" value={formatNumber(protectedFiles)} icon={ShieldCheck} tone="sage" />
       </section>
 
       {latest && (
@@ -596,7 +596,7 @@ function Stat({
   label: string;
   value: string;
   icon: typeof Archive;
-  tone: "lavender" | "peach" | "sky" | "mint";
+  tone: "clay" | "ochre" | "ocean" | "sage";
 }) {
   return (
     <article className={`stat ${tone}`}>
