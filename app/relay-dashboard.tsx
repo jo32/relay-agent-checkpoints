@@ -911,9 +911,9 @@ function SkillIntegrationModal({ onClose }: { onClose: () => void }) {
     ? `export RELAY_API_URL="${origin}"\nexport RELAY_API_TOKEN="${token}"`
     : `export RELAY_API_URL="${origin}"\nexport RELAY_API_TOKEN="<create-a-token-above>"`;
   const createCommand =
-    'python3 .agents/skills/agent-workspace-checkpoint/scripts/create_checkpoint.py \\\n+  --root "$PWD" \\\n+  --label "ready-for-handoff" \\\n+  --upload \\\n+  --json';
+    'python3 .agents/skills/agent-workspace-checkpoint/scripts/create_checkpoint.py \\\n  --root "$PWD" \\\n  --label "ready-for-handoff" \\\n  --upload \\\n  --json';
   const restoreCommand =
-    "python3 .agents/skills/restore-agent-workspace/scripts/download_checkpoint.py \\\n+  --checkpoint cp_EXAMPLE \\\n+  --destination ../restored-workspace \\\n+  --json";
+    "python3 .agents/skills/restore-agent-workspace/scripts/download_checkpoint.py \\\n  --checkpoint cp_EXAMPLE \\\n  --destination ../restored-workspace \\\n  --json";
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import test, { after, before } from "node:test";
 
 const port = 4178;
@@ -62,4 +63,14 @@ test("includes accessible product landmarks", async () => {
   assert.match(html, /<nav[^>]*aria-label="Primary"/);
   assert.match(html, /aria-label="Workspace overview"/);
   assert.match(html, /aria-label="Search checkpoints"/);
+});
+
+test("skill commands are copy-ready", async () => {
+  const source = await readFile(
+    new URL("../app/relay-dashboard.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(source, /\\n\+\s+--/);
+  assert.match(source, /\\n\s+--root/);
+  assert.match(source, /\\n\s+--checkpoint/);
 });
