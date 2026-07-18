@@ -2,28 +2,22 @@
 
 import {
   Archive,
+  ArrowDownToLine,
   ArrowRight,
   Check,
   CheckCircle2,
   ChevronDown,
-  CircleEllipsis,
-  Clock3,
-  Cloud,
-  Code2,
   Copy,
-  Download,
+  Database,
   FileArchive,
-  Files,
-  FolderArchive,
+  Folder,
   GitBranch,
   HardDrive,
-  History,
   KeyRound,
-  LayoutDashboard,
   Link2,
   Loader2,
   Menu,
-  Plus,
+  RefreshCw,
   Search,
   Settings,
   Share2,
@@ -33,7 +27,8 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Checkpoint = {
   id: string;
@@ -52,15 +47,16 @@ type Checkpoint = {
 };
 
 type View = "checkpoints" | "workspaces" | "shared";
+type LoadStatus = "loading" | "ready" | "error";
 
-const demoCheckpoints: Checkpoint[] = [
+const previewCheckpoints: Checkpoint[] = [
   {
     id: "cp_7d2a1f",
     workspaceName: "atlas-web",
     label: "Auth flow ready for handoff",
     sourceAgent: "Claude Code skill",
     status: "ready",
-    createdAt: "2026-07-17T16:30:00.000Z",
+    createdAt: "2026-07-18T08:30:00.000Z",
     sizeBytes: 18_400_000,
     fileCount: 284,
     excludedCount: 14_203,
@@ -75,27 +71,27 @@ const demoCheckpoints: Checkpoint[] = [
     label: "Dashboard filters complete",
     sourceAgent: "Codex skill",
     status: "ready",
-    createdAt: "2026-07-17T13:00:00.000Z",
+    createdAt: "2026-07-18T05:00:00.000Z",
     sizeBytes: 17_900_000,
     fileCount: 276,
     excludedCount: 14_181,
-    parentId: "cp_10bd81",
-    handoff: "Filter state is now reflected in the URL.",
+    parentId: null,
+    handoff: "Filter state is reflected in the URL.",
     checksum: "sha256:26f07c44d19",
     demo: true,
   },
   {
     id: "cp_a94f0e",
     workspaceName: "mobile-kit",
-    label: "Handoff from MacBook",
+    label: "Offline sync adapter",
     sourceAgent: "Codex skill",
     status: "ready",
-    createdAt: "2026-07-16T15:00:00.000Z",
+    createdAt: "2026-07-17T07:00:00.000Z",
     sizeBytes: 9_600_000,
     fileCount: 193,
     excludedCount: 4_982,
     parentId: null,
-    handoff: "Continue the offline sync adapter.",
+    handoff: "Continue the conflict-resolution tests.",
     checksum: "sha256:18c3ab0f2c7",
     demo: true,
   },
@@ -104,30 +100,61 @@ const demoCheckpoints: Checkpoint[] = [
 export default function RelayDashboard({
   displayName,
   email,
+  isLocalPreview,
 }: {
   displayName: string;
   email: string;
+  isLocalPreview: boolean;
 }) {
   const [view, setView] = useState<View>("checkpoints");
-  const [checkpoints, setCheckpoints] = useState<Checkpoint[]>(demoCheckpoints);
+  const [checkpoints, setCheckpoints] = useState<Checkpoint[]>(
+    isLocalPreview ? previewCheckpoints : [],
+  );
+  const [loadStatus, setLoadStatus] = useState<LoadStatus>("loading");
+  const [reloadKey, setReloadKey] = useState(0);
   const [integrationOpen, setIntegrationOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [workspaceFilter, setWorkspaceFilter] = useState<string | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch("/api/checkpoints", { signal: controller.signal })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => {
-        if (controller.signal.aborted) return;
-        const payload = data as { checkpoints?: Checkpoint[] } | null;
-        if (payload?.checkpoints?.length) {
-          setCheckpoints([...payload.checkpoints, ...demoCheckpoints]);
-        }
+
+    fetch("/api/checkpoints", {
+      signal: controller.signal,
+      headers: { accept: "application/json" },
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Checkpoint request failed (${response.status})`);
+        return (await response.json()) as { checkpoints?: Checkpoint[] };
       })
-      .catch(() => undefined);
+      .then((payload) => {
+        if (controller.signal.aborted) return;
+        const stored = payload.checkpoints ?? [];
+        setCheckpoints(stored.length || !isLocalPreview ? stored : previewCheckpoints);
+        setLoadStatus("ready");
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        console.error("Unable to load checkpoints", error);
+        setCheckpoints(isLocalPreview ? previewCheckpoints : []);
+        setLoadStatus("error");
+      });
+
     return () => controller.abort();
+  }, [isLocalPreview, reloadKey]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        searchRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
   useEffect(() => {
@@ -140,92 +167,118 @@ export default function RelayDashboard({
     () => [...new Set(checkpoints.map((checkpoint) => checkpoint.workspaceName))],
     [checkpoints],
   );
-  const filtered = checkpoints.filter((checkpoint) =>
-    `${checkpoint.label} ${checkpoint.workspaceName} ${checkpoint.sourceAgent}`
-      .toLowerCase()
-      .includes(search.toLowerCase()),
-  );
+
+  const visibleCheckpoints = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return checkpoints.filter((checkpoint) => {
+      const matchesWorkspace =
+        !workspaceFilter || checkpoint.workspaceName === workspaceFilter;
+      const matchesSearch =
+        !query ||
+        `${checkpoint.label} ${checkpoint.workspaceName} ${checkpoint.sourceAgent} ${checkpoint.id}`
+          .toLowerCase()
+          .includes(query);
+      return matchesWorkspace && matchesSearch;
+    });
+  }, [checkpoints, search, workspaceFilter]);
+
+  function selectView(nextView: View) {
+    setView(nextView);
+    setMobileNavOpen(false);
+  }
+
+  function openWorkspace(workspace: string) {
+    setWorkspaceFilter(workspace);
+    setView("checkpoints");
+    setMobileNavOpen(false);
+  }
 
   return (
-    <div className="app-shell">
-      <Sidebar
+    <div className="relay-shell">
+      <GlobalHeader
         displayName={displayName}
-        email={email}
-        view={view}
-        onView={setView}
-        workspaces={workspaceNames}
-        open={mobileNavOpen}
-        onClose={() => setMobileNavOpen(false)}
-        onConnect={() => setIntegrationOpen(true)}
+        search={search}
+        searchRef={searchRef}
+        onSearch={setSearch}
+        onOpenNav={() => setMobileNavOpen(true)}
       />
 
-      <main className="main-shell">
-        <header className="topbar">
-          <button
-            className="icon-button mobile-menu"
-            type="button"
-            aria-label="Open navigation"
-            onClick={() => setMobileNavOpen(true)}
-          >
-            <Menu size={20} />
-          </button>
-          <div className="workspace-switcher">
-            <span className="workspace-monogram">A</span>
-            <div>
-              <strong>Atlas workspace</strong>
-              <span>Personal</span>
-            </div>
-            <ChevronDown size={15} />
-          </div>
-          <label className="search-field">
-            <Search size={17} />
-            <span className="sr-only">Search checkpoints</span>
-            <input
-              aria-label="Search checkpoints"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search checkpoints"
-            />
-            <kbd>⌘ K</kbd>
-          </label>
-          <div className="topbar-actions">
-            <button className="icon-button" type="button" aria-label="Activity">
-              <History size={18} />
-            </button>
-            <button className="avatar-button" type="button" aria-label="Account menu">
-              {initials(displayName)}
-            </button>
-          </div>
-        </header>
+      <div className="relay-body">
+        <Sidebar
+          email={email}
+          view={view}
+          workspaceNames={workspaceNames}
+          activeWorkspace={workspaceFilter}
+          storageOnline={loadStatus !== "error"}
+          open={mobileNavOpen}
+          onClose={() => setMobileNavOpen(false)}
+          onView={selectView}
+          onWorkspace={openWorkspace}
+          onConnect={() => setIntegrationOpen(true)}
+        />
 
-        {view === "checkpoints" && (
-          <CheckpointView
-            checkpoints={filtered}
-            onConnect={() => setIntegrationOpen(true)}
-            onShare={(checkpoint) => void shareCheckpoint(checkpoint, setToast)}
-            onRestore={(checkpoint) => void copyRestorePrompt(checkpoint, setToast)}
-          />
-        )}
-        {view === "workspaces" && (
-          <WorkspacesView
-            checkpoints={checkpoints}
-            onConnect={() => setIntegrationOpen(true)}
-          />
-        )}
-        {view === "shared" && (
-          <SharedView
-            checkpoints={checkpoints}
-            onShare={(checkpoint) => void shareCheckpoint(checkpoint, setToast)}
-          />
-        )}
-      </main>
+        <main className="relay-main">
+          {loadStatus === "error" && (
+            <div className="system-banner error" role="alert">
+              <span>
+                <strong>Checkpoint storage is unavailable.</strong>
+                The interface is still usable, but saved data could not be loaded.
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setLoadStatus("loading");
+                  setReloadKey((value) => value + 1);
+                }}
+              >
+                <RefreshCw size={14} />
+                Retry
+              </button>
+            </div>
+          )}
+
+          {isLocalPreview && checkpoints.some((checkpoint) => checkpoint.demo) && (
+            <div className="system-banner preview" role="status">
+              <span>
+                <strong>Local preview</strong>
+                Example checkpoints are shown only because this workspace has no stored data.
+              </span>
+            </div>
+          )}
+
+          {view === "checkpoints" && (
+            <CheckpointsView
+              checkpoints={visibleCheckpoints}
+              allCheckpoints={checkpoints}
+              loading={loadStatus === "loading"}
+              workspaceFilter={workspaceFilter}
+              onClearWorkspace={() => setWorkspaceFilter(null)}
+              onConnect={() => setIntegrationOpen(true)}
+              onShare={(checkpoint) => void shareCheckpoint(checkpoint, setToast)}
+              onRestore={(checkpoint) => void copyRestorePrompt(checkpoint, setToast)}
+            />
+          )}
+
+          {view === "workspaces" && (
+            <WorkspacesView checkpoints={checkpoints} onOpenWorkspace={openWorkspace} />
+          )}
+
+          {view === "shared" && (
+            <SharedView
+              checkpoints={checkpoints}
+              onShare={(checkpoint) => void shareCheckpoint(checkpoint, setToast)}
+            />
+          )}
+        </main>
+      </div>
 
       {integrationOpen && (
         <SkillIntegrationModal onClose={() => setIntegrationOpen(false)} />
       )}
+
       {toast && (
         <div className="toast" role="status">
-          <CheckCircle2 size={18} />
+          <CheckCircle2 size={16} />
           {toast}
         </div>
       )}
@@ -233,106 +286,160 @@ export default function RelayDashboard({
   );
 }
 
-function Sidebar({
+function GlobalHeader({
   displayName,
-  email,
-  view,
-  onView,
-  workspaces,
-  open,
-  onClose,
-  onConnect,
+  search,
+  searchRef,
+  onSearch,
+  onOpenNav,
 }: {
   displayName: string;
+  search: string;
+  searchRef: React.RefObject<HTMLInputElement | null>;
+  onSearch: (value: string) => void;
+  onOpenNav: () => void;
+}) {
+  return (
+    <header className="global-header">
+      <div className="brand-cluster">
+        <button
+          className="mobile-nav-trigger"
+          type="button"
+          aria-label="Open navigation"
+          onClick={onOpenNav}
+        >
+          <Menu size={18} />
+        </button>
+        <Link className="relay-brand" href="/" aria-label="Relay home">
+          <span className="relay-triangle" aria-hidden="true" />
+          <strong>Relay</strong>
+        </Link>
+        <span className="header-divider" />
+        <span className="team-switcher">
+          Personal
+          <ChevronDown size={14} />
+        </span>
+      </div>
+
+      <label className="command-search">
+        <Search size={15} />
+        <span className="sr-only">Search checkpoints</span>
+        <input
+          ref={searchRef}
+          aria-label="Search checkpoints"
+          value={search}
+          onChange={(event) => onSearch(event.target.value)}
+          placeholder="Search checkpoints…"
+        />
+        <kbd>⌘ K</kbd>
+      </label>
+
+      <div className="header-account">
+        <span>Secure workspace registry</span>
+        <span className="avatar">{initials(displayName)}</span>
+      </div>
+    </header>
+  );
+}
+
+function Sidebar({
+  email,
+  view,
+  workspaceNames,
+  activeWorkspace,
+  storageOnline,
+  open,
+  onClose,
+  onView,
+  onWorkspace,
+  onConnect,
+}: {
   email: string;
   view: View;
-  onView: (view: View) => void;
-  workspaces: string[];
+  workspaceNames: string[];
+  activeWorkspace: string | null;
+  storageOnline: boolean;
   open: boolean;
   onClose: () => void;
+  onView: (view: View) => void;
+  onWorkspace: (workspace: string) => void;
   onConnect: () => void;
 }) {
-  const nav = [
+  const navigation = [
     { id: "checkpoints" as const, label: "Checkpoints", icon: Archive },
-    { id: "workspaces" as const, label: "Workspaces", icon: LayoutDashboard },
-    { id: "shared" as const, label: "Shared", icon: Users },
+    { id: "workspaces" as const, label: "Workspaces", icon: Folder },
+    { id: "shared" as const, label: "Shared links", icon: Users },
   ];
+
   return (
     <>
-      <div className={`sidebar-backdrop ${open ? "visible" : ""}`} onClick={onClose} />
-      <aside className={`sidebar ${open ? "open" : ""}`}>
-        <div className="brand-row">
-          <div className="brand-mark" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-          </div>
-          <span className="brand-name">relay</span>
-          <button className="sidebar-close" onClick={onClose} aria-label="Close navigation">
-            <X size={19} />
+      <button
+        className={`nav-backdrop ${open ? "visible" : ""}`}
+        type="button"
+        aria-label="Close navigation"
+        onClick={onClose}
+      />
+      <aside className={`side-navigation ${open ? "open" : ""}`}>
+        <div className="mobile-nav-heading">
+          <strong>Navigation</strong>
+          <button type="button" onClick={onClose} aria-label="Close navigation">
+            <X size={18} />
           </button>
         </div>
 
-        <button className="create-sidebar-button" type="button" onClick={onConnect}>
-          <SquareTerminal size={17} />
+        <button className="connect-button" type="button" onClick={onConnect}>
+          <PlusIcon />
           Connect skills
-          <kbd>K</kbd>
         </button>
 
-        <nav className="primary-nav" aria-label="Primary">
-          {nav.map((item) => {
+        <nav aria-label="Primary">
+          <p className="nav-label">Manage</p>
+          {navigation.map((item) => {
             const Icon = item.icon;
             return (
               <button
                 key={item.id}
-                type="button"
                 className={view === item.id ? "active" : ""}
-                onClick={() => {
-                  onView(item.id);
-                  onClose();
-                }}
+                type="button"
+                onClick={() => onView(item.id)}
               >
-                <Icon size={18} />
+                <Icon size={16} />
                 <span>{item.label}</span>
               </button>
             );
           })}
         </nav>
 
-        <div className="sidebar-section">
-          <div className="section-label">
-            <span>Recent workspaces</span>
-            <Plus size={14} />
+        {workspaceNames.length > 0 && (
+          <div className="workspace-navigation">
+            <p className="nav-label">Workspaces</p>
+            {workspaceNames.slice(0, 5).map((workspace) => (
+              <button
+                className={activeWorkspace === workspace ? "active" : ""}
+                type="button"
+                key={workspace}
+                onClick={() => onWorkspace(workspace)}
+              >
+                <span className="workspace-glyph">
+                  {workspace.slice(0, 1).toUpperCase()}
+                </span>
+                <span>{workspace}</span>
+              </button>
+            ))}
           </div>
-          {workspaces.slice(0, 3).map((workspace, index) => (
-            <button className="workspace-nav" type="button" key={workspace}>
-              <span className={`workspace-dot dot-${index + 1}`} />
-              <span>{workspace}</span>
-            </button>
-          ))}
-        </div>
+        )}
 
-        <div className="sidebar-bottom">
-          <div className="storage-card">
+        <div className="sidebar-footer">
+          <div className={`connection-status ${storageOnline ? "" : "offline"}`}>
+            <span className="status-dot" />
             <div>
-              <Cloud size={16} />
-              <span>Storage</span>
-              <strong>1.8 GB</strong>
+              <strong>{storageOnline ? "Storage connected" : "Storage unavailable"}</strong>
+              <small>{storageOnline ? "D1 metadata · R2 archives" : "Retry from the status banner"}</small>
             </div>
-            <div className="storage-track"><span /></div>
-            <small>18% of 10 GB used</small>
           </div>
-          <button className="settings-link" type="button">
-            <Settings size={17} />
-            Settings
-          </button>
-          <div className="account-card">
-            <span className="account-avatar">{initials(displayName)}</span>
-            <div>
-              <strong>{displayName}</strong>
-              <small>{email}</small>
-            </div>
-            <CircleEllipsis size={17} />
+          <div className="account-email">
+            <Settings size={15} />
+            <span>{email}</span>
           </div>
         </div>
       </aside>
@@ -340,127 +447,118 @@ function Sidebar({
   );
 }
 
-function CheckpointView({
+function CheckpointsView({
   checkpoints,
+  allCheckpoints,
+  loading,
+  workspaceFilter,
+  onClearWorkspace,
   onConnect,
   onShare,
   onRestore,
 }: {
   checkpoints: Checkpoint[];
+  allCheckpoints: Checkpoint[];
+  loading: boolean;
+  workspaceFilter: string | null;
+  onClearWorkspace: () => void;
   onConnect: () => void;
   onShare: (checkpoint: Checkpoint) => void;
   onRestore: (checkpoint: Checkpoint) => void;
 }) {
-  const atlas = checkpoints.filter((checkpoint) => checkpoint.workspaceName === "atlas-web");
-  const latest = atlas[0] ?? checkpoints[0] ?? demoCheckpoints[0];
-  const parent =
-    checkpoints.find((checkpoint) => checkpoint.id === latest.parentId) ??
-    demoCheckpoints[1];
+  const workspaceCount = new Set(allCheckpoints.map((item) => item.workspaceName)).size;
+  const totalBytes = allCheckpoints.reduce((sum, item) => sum + item.sizeBytes, 0);
+  const protectedFiles = allCheckpoints.reduce((sum, item) => sum + item.excludedCount, 0);
+  const latest = checkpoints[0] ?? allCheckpoints[0] ?? null;
 
   return (
-    <div className="page-content">
-      <section className="page-heading">
-        <div>
-          <p className="eyebrow">Workspace continuity</p>
-          <h1>Your agents create checkpoints. Relay keeps them ready.</h1>
-          <p>
-            Immutable, sanitized workspace archives that another skill can
-            download and restore anywhere.
-          </p>
-        </div>
-        <button className="primary-button" type="button" onClick={onConnect}>
-          <SquareTerminal size={18} />
-          Connect skills
-        </button>
-      </section>
-
-      <section className="metric-grid" aria-label="Workspace overview">
-        <article>
-          <span className="metric-icon peach"><Archive size={19} /></span>
-          <div><strong>{checkpoints.length}</strong><span>Checkpoints</span></div>
-          <small>+4 this week</small>
-        </article>
-        <article>
-          <span className="metric-icon violet"><Code2 size={19} /></span>
-          <div><strong>2</strong><span>Workflow skills</span></div>
-          <small>Create + restore</small>
-        </article>
-        <article>
-          <span className="metric-icon green"><ShieldCheck size={19} /></span>
-          <div><strong>19.2k</strong><span>Unsafe files skipped</span></div>
-          <small>Secrets protected</small>
-        </article>
-        <article>
-          <span className="metric-icon blue"><HardDrive size={19} /></span>
-          <div><strong>1.8 GB</strong><span>Stored safely</span></div>
-          <small>Immutable archives</small>
-        </article>
-      </section>
-
-      <section className="lineage-section">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Current workspace</p>
-            <h2>Checkpoint lineage</h2>
-          </div>
-          <button className="ghost-button" type="button">
-            View full history <ArrowRight size={16} />
+    <div className="view-container">
+      <PageHeading
+        eyebrow="Workspace continuity"
+        title={workspaceFilter ?? "Checkpoints"}
+        description={
+          workspaceFilter
+            ? `Immutable history for ${workspaceFilter}.`
+            : "Immutable workspace archives created by skills and ready to restore anywhere."
+        }
+        action={
+          <button className="button primary" type="button" onClick={onConnect}>
+            <PlusIcon />
+            Connect skills
           </button>
-        </div>
+        }
+      />
 
-        <div className="lineage-card">
-          <div className="lineage-top">
-            <div>
-              <span className="live-pulse" />
-              <strong>atlas-web</strong>
-              <small>immutable history</small>
-            </div>
-            <span className="synced-badge"><Check size={13} /> Uploaded by skill</span>
-          </div>
-
-          <div className="lineage-canvas">
-            <div className="lineage-rail" aria-hidden="true">
-              <span className="node node-one" />
-              <span className="node node-two" />
-              <span className="node node-three" />
-            </div>
-            <LineageNode checkpoint={parent} className="lineage-parent" onRestore={onRestore} />
-            <LineageNode
-              checkpoint={latest}
-              className="lineage-current"
-              onRestore={onRestore}
-              current
-            />
-            <button className="lineage-new" type="button" onClick={onConnect}>
-              <span><UploadCloud size={18} /></span>
-              <strong>Create from agent</strong>
-              <small>Use the checkpoint skill</small>
-            </button>
-          </div>
-        </div>
+      <section className="stat-grid" aria-label="Workspace overview">
+        <Stat label="Checkpoints" value={String(allCheckpoints.length)} icon={Archive} />
+        <Stat label="Workspaces" value={String(workspaceCount)} icon={Folder} />
+        <Stat label="Archive storage" value={formatBytes(totalBytes)} icon={HardDrive} />
+        <Stat label="Files excluded" value={formatNumber(protectedFiles)} icon={ShieldCheck} />
       </section>
 
-      <section className="recent-section">
-        <div className="section-heading">
+      {latest && (
+        <section className="latest-panel">
+          <div className="panel-heading">
+            <div>
+              <span className="status-dot" />
+              <span>Latest checkpoint</span>
+            </div>
+            <span className="mono">{formatDate(latest.createdAt)}</span>
+          </div>
+          <div className="latest-grid">
+            <div className="latest-primary">
+              <span className="entity-icon"><FileArchive size={18} /></span>
+              <div>
+                <span className="badge success">Ready</span>
+                <h2>{latest.label}</h2>
+                <p>{latest.handoff || "No handoff note was provided."}</p>
+              </div>
+            </div>
+            <dl className="latest-meta">
+              <div><dt>Workspace</dt><dd>{latest.workspaceName}</dd></div>
+              <div><dt>Created by</dt><dd>{latest.sourceAgent}</dd></div>
+              <div><dt>Checkpoint</dt><dd className="mono">{latest.id}</dd></div>
+              <div><dt>Integrity</dt><dd className="mono">{shortChecksum(latest.checksum)}</dd></div>
+            </dl>
+            <div className="latest-actions">
+              <button className="button secondary" type="button" onClick={() => onRestore(latest)}>
+                <ArrowDownToLine size={15} />
+                Restore
+              </button>
+              <button className="icon-control" type="button" aria-label={`Share ${latest.label}`} onClick={() => onShare(latest)}>
+                <Share2 size={15} />
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+
+      <section className="registry-section">
+        <div className="section-title-row">
           <div>
-            <p className="eyebrow">Your work</p>
-            <h2>Recent checkpoints</h2>
+            <h2>Checkpoint registry</h2>
+            <p>Every archive is immutable and addressed by checksum.</p>
           </div>
-          <div className="table-actions">
-            <button className="compact-button" type="button"><Files size={15} /> All workspaces</button>
-            <button className="compact-button" type="button"><Clock3 size={15} /> Recent</button>
-          </div>
+          {workspaceFilter && (
+            <button className="filter-pill" type="button" onClick={onClearWorkspace}>
+              {workspaceFilter}
+              <X size={13} />
+            </button>
+          )}
         </div>
-        <div className="checkpoint-table">
-          <div className="table-header">
+
+        <div className="data-table">
+          <div className="data-table-header">
             <span>Checkpoint</span>
-            <span>Created by</span>
-            <span>Files</span>
+            <span>Source</span>
+            <span>Contents</span>
             <span>Created</span>
-            <span aria-hidden="true" />
+            <span />
           </div>
-          {checkpoints.length ? (
-            checkpoints.slice(0, 7).map((checkpoint) => (
+          {loading && allCheckpoints.length === 0 ? (
+            <TableLoading />
+          ) : checkpoints.length > 0 ? (
+            checkpoints.map((checkpoint) => (
               <CheckpointRow
                 key={checkpoint.id}
                 checkpoint={checkpoint}
@@ -469,10 +567,15 @@ function CheckpointView({
               />
             ))
           ) : (
-            <div className="empty-row">
-              <FileArchive size={26} />
-              <strong>No checkpoints match your search.</strong>
-            </div>
+            <EmptyState
+              title={allCheckpoints.length ? "No checkpoints match this filter" : "No checkpoints yet"}
+              description={
+                allCheckpoints.length
+                  ? "Clear the workspace filter or try another search."
+                  : "Connect the creation skill to upload your first immutable workspace archive."
+              }
+              onConnect={allCheckpoints.length ? undefined : onConnect}
+            />
           )}
         </div>
       </section>
@@ -480,32 +583,22 @@ function CheckpointView({
   );
 }
 
-function LineageNode({
-  checkpoint,
-  className,
-  current,
-  onRestore,
+function Stat({
+  label,
+  value,
+  icon: Icon,
 }: {
-  checkpoint: Checkpoint;
-  className: string;
-  current?: boolean;
-  onRestore: (checkpoint: Checkpoint) => void;
+  label: string;
+  value: string;
+  icon: typeof Archive;
 }) {
   return (
-    <article className={`lineage-node ${className} ${current ? "current" : ""}`}>
-      <div className="source-mark mint"><FolderArchive size={17} /></div>
-      <div className="lineage-node-copy">
-        <span>{checkpoint.sourceAgent}</span>
-        <strong>{checkpoint.label}</strong>
-        <small>{relativeTime(checkpoint.createdAt)} · {formatBytes(checkpoint.sizeBytes)}</small>
+    <article className="stat">
+      <div>
+        <span>{label}</span>
+        <Icon size={15} />
       </div>
-      {current ? (
-        <button type="button" onClick={() => onRestore(checkpoint)}>
-          Restore <ArrowRight size={14} />
-        </button>
-      ) : (
-        <CheckCircle2 className="node-check" size={18} />
-      )}
+      <strong>{value}</strong>
     </article>
   );
 }
@@ -520,41 +613,41 @@ function CheckpointRow({
   onRestore: (checkpoint: Checkpoint) => void;
 }) {
   return (
-    <article className="checkpoint-row">
-      <div className="checkpoint-name">
-        <span className="archive-icon"><FileArchive size={19} /></span>
+    <article className="data-row">
+      <div className="entity-cell">
+        <span className="entity-icon"><FileArchive size={17} /></span>
         <div>
           <strong>{checkpoint.label}</strong>
-          <small><GitBranch size={12} /> {checkpoint.workspaceName} · {checkpoint.id.slice(-6)}</small>
+          <span className="mono"><GitBranch size={11} /> {checkpoint.id}</span>
         </div>
       </div>
       <div>
-        <span className="source-chip mint"><Code2 size={14} /> {checkpoint.sourceAgent}</span>
+        <span className="source-badge"><SquareTerminal size={12} /> {checkpoint.sourceAgent}</span>
       </div>
-      <div className="file-count">
-        <strong>{checkpoint.fileCount.toLocaleString()}</strong>
-        <small>{formatBytes(checkpoint.sizeBytes)}</small>
+      <div className="contents-cell">
+        <strong>{formatNumber(checkpoint.fileCount)} files</strong>
+        <span>{formatBytes(checkpoint.sizeBytes)}</span>
       </div>
-      <time dateTime={checkpoint.createdAt}>{relativeTime(checkpoint.createdAt)}</time>
-      <div className="row-actions">
+      <time dateTime={checkpoint.createdAt}>{formatDate(checkpoint.createdAt)}</time>
+      <div className="row-controls">
         {!checkpoint.demo && (
           <a
-            className="row-icon-button"
+            className="icon-control"
             href={`/api/checkpoints/${checkpoint.id}/download`}
             aria-label={`Download ${checkpoint.label}`}
           >
-            <Download size={16} />
+            <ArrowDownToLine size={15} />
           </a>
         )}
         <button
-          className="row-icon-button"
+          className="icon-control"
           type="button"
-          onClick={() => onShare(checkpoint)}
           aria-label={`Share ${checkpoint.label}`}
+          onClick={() => onShare(checkpoint)}
         >
-          <Share2 size={16} />
+          <Share2 size={15} />
         </button>
-        <button className="continue-button" type="button" onClick={() => onRestore(checkpoint)}>
+        <button className="button row-button" type="button" onClick={() => onRestore(checkpoint)}>
           Restore
         </button>
       </div>
@@ -564,61 +657,75 @@ function CheckpointRow({
 
 function WorkspacesView({
   checkpoints,
-  onConnect,
+  onOpenWorkspace,
 }: {
   checkpoints: Checkpoint[];
-  onConnect: () => void;
+  onOpenWorkspace: (workspace: string) => void;
 }) {
-  const groups = [...new Set(checkpoints.map((checkpoint) => checkpoint.workspaceName))].map(
-    (workspace) => {
-      const items = checkpoints.filter((checkpoint) => checkpoint.workspaceName === workspace);
-      return {
-        workspace,
-        count: items.length,
-        latest: items[0],
-        bytes: items.reduce((sum, checkpoint) => sum + checkpoint.sizeBytes, 0),
-      };
-    },
+  const groups = useMemo(
+    () =>
+      [...new Set(checkpoints.map((checkpoint) => checkpoint.workspaceName))].map(
+        (workspace) => {
+          const items = checkpoints.filter(
+            (checkpoint) => checkpoint.workspaceName === workspace,
+          );
+          return {
+            workspace,
+            items,
+            latest: items[0],
+            bytes: items.reduce((sum, checkpoint) => sum + checkpoint.sizeBytes, 0),
+            files: items.reduce((sum, checkpoint) => sum + checkpoint.fileCount, 0),
+          };
+        },
+      ),
+    [checkpoints],
   );
+
   return (
-    <div className="page-content secondary-view">
-      <section className="page-heading">
-        <div>
-          <p className="eyebrow">Checkpoint registry</p>
-          <h1>Every workspace has a durable history.</h1>
-          <p>Skills upload immutable versions; Relay keeps lineage, integrity, and access in one place.</p>
+    <div className="view-container">
+      <PageHeading
+        eyebrow="Registry"
+        title="Workspaces"
+        description="Each workspace keeps a linear, immutable history of skill-created checkpoints."
+      />
+
+      <section className="workspace-list">
+        <div className="workspace-list-header">
+          <span>Workspace</span>
+          <span>Checkpoints</span>
+          <span>Files</span>
+          <span>Storage</span>
+          <span>Latest</span>
+          <span />
         </div>
-        <button className="primary-button" onClick={onConnect}>
-          <SquareTerminal size={18} /> Connect skills
-        </button>
-      </section>
-      <div className="workspace-grid">
-        {groups.map((group, index) => (
-          <article key={group.workspace} className="workspace-panel">
-            <span className={`source-mark large ${index === 1 ? "mint" : index === 2 ? "blue" : "clay"}`}>
-              <FolderArchive size={20} />
-            </span>
-            <div>
-              <small>{relativeTime(group.latest.createdAt)}</small>
-              <h3>{group.workspace}</h3>
-              <p>{group.count} checkpoints · {formatBytes(group.bytes)}</p>
-            </div>
-            <button type="button">Open history <ArrowRight size={15} /></button>
-          </article>
-        ))}
-      </div>
-      <section className="activity-panel">
-        <div className="section-heading">
-          <div><p className="eyebrow">Latest uploads</p><h2>Skill activity</h2></div>
-        </div>
-        {checkpoints.slice(0, 5).map((checkpoint, index) => (
-          <div className="activity-row" key={checkpoint.id}>
-            <span className={`activity-status ${index === 0 ? "active" : ""}`} />
-            <div><strong>{checkpoint.label}</strong><small>{checkpoint.workspaceName}</small></div>
-            <span>{checkpoint.sourceAgent}</span>
-            <time>{relativeTime(checkpoint.createdAt)}</time>
-          </div>
-        ))}
+        {groups.length ? (
+          groups.map((group) => (
+            <article className="workspace-row" key={group.workspace}>
+              <div className="entity-cell">
+                <span className="workspace-glyph large">
+                  {group.workspace.slice(0, 1).toUpperCase()}
+                </span>
+                <div>
+                  <strong>{group.workspace}</strong>
+                  <span className="mono">{shortChecksum(group.latest.checksum)}</span>
+                </div>
+              </div>
+              <strong>{group.items.length}</strong>
+              <span>{formatNumber(group.files)}</span>
+              <span>{formatBytes(group.bytes)}</span>
+              <time dateTime={group.latest.createdAt}>{formatDate(group.latest.createdAt)}</time>
+              <button className="button row-button" type="button" onClick={() => onOpenWorkspace(group.workspace)}>
+                Open
+                <ArrowRight size={14} />
+              </button>
+            </article>
+          ))
+        ) : (
+          <EmptyState
+            title="No workspaces yet"
+            description="A workspace appears after its first checkpoint is uploaded."
+          />
+        )}
       </section>
     </div>
   );
@@ -632,41 +739,116 @@ function SharedView({
   onShare: (checkpoint: Checkpoint) => void;
 }) {
   return (
-    <div className="page-content secondary-view">
-      <section className="page-heading">
+    <div className="view-container">
+      <PageHeading
+        eyebrow="Collaboration"
+        title="Shared links"
+        description="Create an expiring link to one immutable checkpoint. Links expire after seven days."
+      />
+
+      <section className="security-note">
+        <div className="security-icon"><ShieldCheck size={20} /></div>
         <div>
-          <p className="eyebrow">Secure collaboration</p>
-          <h1>Share a complete handoff, not a vague update.</h1>
-          <p>Private links expire after seven days and point to one immutable, verifiable checkpoint.</p>
+          <h2>Share the artifact, not your secrets.</h2>
+          <p>
+            The creation skill removes ignored and sensitive files before upload.
+            The restore skill verifies hashes and rejects unsafe archive paths.
+          </p>
+        </div>
+        <div className="security-facts">
+          <span><Check size={13} /> Expiring URL</span>
+          <span><Check size={13} /> Immutable bytes</span>
+          <span><Check size={13} /> Verified restore</span>
         </div>
       </section>
-      <div className="share-callout">
-        <div className="share-visual"><Link2 size={28} /><span /><span /></div>
-        <div>
-          <span className="safe-label"><ShieldCheck size={14} /> Secrets stay out</span>
-          <h2>Send a restorable workspace in one click.</h2>
-          <p>The restore skill downloads the archive, rejects unsafe paths, verifies every hash, and extracts into a new workspace.</p>
+
+      <section className="registry-section">
+        <div className="section-title-row">
+          <div>
+            <h2>Ready to share</h2>
+            <p>Generate a new link when you need to hand off a checkpoint.</p>
+          </div>
         </div>
+        <div className="share-table">
+          {checkpoints.length ? (
+            checkpoints.map((checkpoint) => (
+              <article key={checkpoint.id}>
+                <div className="entity-cell">
+                  <span className="entity-icon"><Link2 size={16} /></span>
+                  <div>
+                    <strong>{checkpoint.label}</strong>
+                    <span>{checkpoint.workspaceName} · {formatDate(checkpoint.createdAt)}</span>
+                  </div>
+                </div>
+                <span className="mono">{checkpoint.id}</span>
+                <button className="button secondary" type="button" onClick={() => onShare(checkpoint)}>
+                  <Copy size={14} />
+                  Copy link
+                </button>
+              </article>
+            ))
+          ) : (
+            <EmptyState
+              title="Nothing to share yet"
+              description="Upload a checkpoint before creating a share link."
+            />
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function PageHeading({
+  eyebrow,
+  title,
+  description,
+  action,
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <header className="page-heading">
+      <div>
+        <p className="eyebrow">{eyebrow}</p>
+        <h1>{title}</h1>
+        <p>{description}</p>
       </div>
-      <section className="recent-section">
-        <div className="section-heading">
-          <div><p className="eyebrow">Ready to send</p><h2>Your checkpoints</h2></div>
-        </div>
-        <div className="share-list">
-          {checkpoints.slice(0, 6).map((checkpoint) => (
-            <article key={checkpoint.id}>
-              <span className="archive-icon"><FileArchive size={19} /></span>
-              <div>
-                <strong>{checkpoint.label}</strong>
-                <small>{checkpoint.workspaceName} · {relativeTime(checkpoint.createdAt)}</small>
-              </div>
-              <button type="button" onClick={() => onShare(checkpoint)}>
-                <Copy size={15} /> Copy link
-              </button>
-            </article>
-          ))}
-        </div>
-      </section>
+      {action}
+    </header>
+  );
+}
+
+function EmptyState({
+  title,
+  description,
+  onConnect,
+}: {
+  title: string;
+  description: string;
+  onConnect?: () => void;
+}) {
+  return (
+    <div className="empty-state">
+      <span><Archive size={20} /></span>
+      <h3>{title}</h3>
+      <p>{description}</p>
+      {onConnect && (
+        <button className="button secondary" type="button" onClick={onConnect}>
+          Connect skills
+        </button>
+      )}
+    </div>
+  );
+}
+
+function TableLoading() {
+  return (
+    <div className="table-loading" aria-label="Loading checkpoints">
+      {[0, 1, 2].map((item) => <span key={item} />)}
     </div>
   );
 }
@@ -676,7 +858,23 @@ function SkillIntegrationModal({ onClose }: { onClose: () => void }) {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
-  const origin = typeof window === "undefined" ? "https://your-relay-site" : window.location.origin;
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const origin =
+    typeof window === "undefined" ? "https://your-relay-site" : window.location.origin;
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    closeRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [onClose]);
 
   async function createToken() {
     setCreating(true);
@@ -700,111 +898,120 @@ function SkillIntegrationModal({ onClose }: { onClose: () => void }) {
   }
 
   async function copy(value: string, label: string) {
-    await navigator.clipboard.writeText(value);
-    setCopied(label);
-    window.setTimeout(() => setCopied(null), 1800);
+    try {
+      await copyText(value);
+      setCopied(label);
+      window.setTimeout(() => setCopied(null), 1800);
+    } catch {
+      setError("Clipboard access is unavailable. Select and copy the text manually.");
+    }
   }
 
   const environment = token
     ? `export RELAY_API_URL="${origin}"\nexport RELAY_API_TOKEN="${token}"`
     : `export RELAY_API_URL="${origin}"\nexport RELAY_API_TOKEN="<create-a-token-above>"`;
   const createCommand =
-    'python3 .agents/skills/agent-workspace-checkpoint/scripts/create_checkpoint.py \\\n  --root "$PWD" \\\n  --label "ready-for-handoff" \\\n  --upload \\\n  --json';
+    'python3 .agents/skills/agent-workspace-checkpoint/scripts/create_checkpoint.py \\\n+  --root "$PWD" \\\n+  --label "ready-for-handoff" \\\n+  --upload \\\n+  --json';
   const restoreCommand =
-    "python3 .agents/skills/restore-agent-workspace/scripts/download_checkpoint.py \\\n  --checkpoint cp_EXAMPLE \\\n  --destination ../restored-workspace \\\n  --json";
+    "python3 .agents/skills/restore-agent-workspace/scripts/download_checkpoint.py \\\n+  --checkpoint cp_EXAMPLE \\\n+  --destination ../restored-workspace \\\n+  --json";
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <section
-        className="checkpoint-modal skill-modal"
+        className="integration-modal"
         role="dialog"
         aria-modal="true"
-        aria-labelledby="skill-modal-title"
+        aria-labelledby="integration-title"
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <div className="modal-header">
+        <header className="modal-header">
           <div>
-            <span className="modal-icon"><SquareTerminal size={20} /></span>
+            <span className="modal-symbol"><SquareTerminal size={18} /></span>
             <div>
-              <p className="eyebrow">Local-first workflow</p>
-              <h2 id="skill-modal-title">Connect the checkpoint skills</h2>
+              <p className="eyebrow">Skill API</p>
+              <h2 id="integration-title">Connect checkpoint skills</h2>
             </div>
           </div>
-          <button className="icon-button" type="button" onClick={onClose} aria-label="Close">
-            <X size={19} />
+          <button ref={closeRef} className="icon-control" type="button" onClick={onClose} aria-label="Close">
+            <X size={16} />
           </button>
-        </div>
+        </header>
 
-        <div className="modal-body integration-body">
-          <div className="integration-intro">
-            <ShieldCheck size={20} />
-            <div>
-              <strong>Archives are created and restored by skills, not by this website.</strong>
-              <p>Relay only stores immutable checkpoint bytes, lineage, and sharing metadata.</p>
-            </div>
+        <div className="modal-content">
+          <div className="modal-note">
+            <Database size={17} />
+            <p>
+              Relay stores archives in R2 and metadata in D1. Creation and restore
+              stay inside the two workspace skills.
+            </p>
           </div>
 
-          <section className="token-panel">
-            <div>
-              <span className="step-number">1</span>
+          <section className="setup-step">
+            <div className="step-heading">
+              <span>1</span>
               <div>
-                <strong>Create an API token</strong>
-                <small>Used by both skills. The full token is shown once.</small>
+                <h3>Create an API token</h3>
+                <p>The full token is displayed once and stored only as a hash.</p>
               </div>
+              {!token ? (
+                <button className="button primary" type="button" onClick={() => void createToken()} disabled={creating}>
+                  {creating ? <Loader2 className="spin" size={14} /> : <KeyRound size={14} />}
+                  {creating ? "Creating…" : "Create token"}
+                </button>
+              ) : (
+                <span className="badge success"><Check size={12} /> Token ready</span>
+              )}
             </div>
-            {!token ? (
-              <button className="primary-button" type="button" onClick={() => void createToken()} disabled={creating}>
-                {creating ? <Loader2 className="spin" size={16} /> : <KeyRound size={16} />}
-                {creating ? "Creating…" : "Create token"}
-              </button>
-            ) : (
-              <span className="token-ready"><CheckCircle2 size={15} /> Token ready</span>
-            )}
+            <CodeBlock
+              label="Environment"
+              value={environment}
+              onCopy={() => void copy(environment, "environment")}
+              copied={copied === "environment"}
+            />
           </section>
 
-          <CodeBlock
-            label="Environment"
-            value={environment}
-            onCopy={() => void copy(environment, "environment")}
-            copied={copied === "environment"}
-            secret={Boolean(token)}
-          />
-
-          <div className="skill-pair">
-            <section className="skill-card">
-              <span className="step-number">2</span>
-              <div className="skill-card-icon create"><UploadCloud size={19} /></div>
-              <h3>Create + upload</h3>
-              <p>The creation skill infers ignores, removes secrets and caches, writes the handoff, hashes every file, then uploads.</p>
+          <div className="setup-grid">
+            <section className="setup-step">
+              <div className="step-heading compact">
+                <span>2</span>
+                <div>
+                  <h3>Create and upload</h3>
+                  <p>Sanitize, hash, archive, then upload.</p>
+                </div>
+                <UploadCloud size={17} />
+              </div>
               <CodeBlock
                 label="Creation skill"
                 value={createCommand}
                 onCopy={() => void copy(createCommand, "create")}
                 copied={copied === "create"}
-                compact
               />
             </section>
-            <section className="skill-card">
-              <span className="step-number">3</span>
-              <div className="skill-card-icon restore"><Download size={19} /></div>
-              <h3>Download + restore</h3>
-              <p>The restore skill downloads a checkpoint, blocks unsafe archive members, verifies hashes, and extracts into a new workspace.</p>
+            <section className="setup-step">
+              <div className="step-heading compact">
+                <span>3</span>
+                <div>
+                  <h3>Download and restore</h3>
+                  <p>Verify and extract into a new workspace.</p>
+                </div>
+                <ArrowDownToLine size={17} />
+              </div>
               <CodeBlock
                 label="Restore skill"
                 value={restoreCommand}
                 onCopy={() => void copy(restoreCommand, "restore")}
                 copied={copied === "restore"}
-                compact
               />
             </section>
           </div>
-          {error && <p className="form-error">{error}</p>}
+
+          {error && <p className="form-error" role="alert">{error}</p>}
         </div>
 
-        <div className="modal-footer">
-          <div><ShieldCheck size={15} /> Local scan · Encrypted storage · Verified restore</div>
-          <button className="primary-button" type="button" onClick={onClose}>Done</button>
-        </div>
+        <footer className="modal-footer">
+          <span><ShieldCheck size={14} /> Sanitized · Immutable · Verified</span>
+          <button className="button primary" type="button" onClick={onClose}>Done</button>
+        </footer>
       </section>
     </div>
   );
@@ -815,23 +1022,18 @@ function CodeBlock({
   value,
   onCopy,
   copied,
-  compact,
-  secret,
 }: {
   label: string;
   value: string;
   onCopy: () => void;
   copied: boolean;
-  compact?: boolean;
-  secret?: boolean;
 }) {
   return (
-    <div className={`code-block ${compact ? "compact" : ""}`}>
+    <div className="code-block">
       <div>
         <span>{label}</span>
-        {secret && <em>Store securely</em>}
         <button type="button" onClick={onCopy}>
-          {copied ? <Check size={13} /> : <Copy size={13} />}
+          {copied ? <Check size={12} /> : <Copy size={12} />}
           {copied ? "Copied" : "Copy"}
         </button>
       </div>
@@ -840,24 +1042,39 @@ function CodeBlock({
   );
 }
 
+function PlusIcon() {
+  return (
+    <span className="plus-icon" aria-hidden="true">
+      <span />
+      <span />
+    </span>
+  );
+}
+
 async function shareCheckpoint(
   checkpoint: Checkpoint,
   setToast: (message: string) => void,
 ) {
   if (checkpoint.demo) {
-    await navigator.clipboard?.writeText(
-      `Relay checkpoint: ${checkpoint.label} (${checkpoint.id})`,
-    );
-    setToast("Demo checkpoint details copied.");
+    try {
+      await copyText(`Relay preview checkpoint: ${checkpoint.label} (${checkpoint.id})`);
+      setToast("Preview checkpoint details copied.");
+    } catch {
+      setToast("Clipboard access is unavailable.");
+    }
     return;
   }
 
   try {
-    const response = await fetch(`/api/checkpoints/${checkpoint.id}/share`, { method: "POST" });
+    const response = await fetch(`/api/checkpoints/${checkpoint.id}/share`, {
+      method: "POST",
+    });
     const result = (await response.json()) as { error?: string; url?: string };
-    if (!response.ok || !result.url) throw new Error(result.error);
-    await navigator.clipboard.writeText(result.url);
-    setToast("Private 7-day checkpoint link copied.");
+    if (!response.ok || !result.url) {
+      throw new Error(result.error || "Share link creation failed.");
+    }
+    await copyText(result.url);
+    setToast("Private seven-day link copied.");
   } catch {
     setToast("Share link could not be created.");
   }
@@ -867,9 +1084,19 @@ async function copyRestorePrompt(
   checkpoint: Checkpoint,
   setToast: (message: string) => void,
 ) {
-  const prompt = `Use $restore-agent-workspace to download Relay checkpoint ${checkpoint.id} and extract it into a new workspace.`;
-  await navigator.clipboard?.writeText(prompt);
-  setToast("Restore-skill prompt copied.");
+  try {
+    await copyText(
+      `Use $restore-agent-workspace to download Relay checkpoint ${checkpoint.id} and extract it into a new workspace.`,
+    );
+    setToast("Restore-skill prompt copied.");
+  } catch {
+    setToast("Clipboard access is unavailable.");
+  }
+}
+
+async function copyText(value: string) {
+  if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
+  await navigator.clipboard.writeText(value);
 }
 
 function initials(name: string) {
@@ -881,18 +1108,29 @@ function initials(name: string) {
     .toUpperCase();
 }
 
-function relativeTime(value: string) {
-  const elapsed = Date.now() - new Date(value).getTime();
-  const minutes = Math.max(1, Math.round(elapsed / 60_000));
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(value));
+}
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    notation: value > 99_999 ? "compact" : "standard",
+  }).format(value);
 }
 
 function formatBytes(bytes: number) {
+  if (bytes <= 0) return "0 B";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
   return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+}
+
+function shortChecksum(value: string) {
+  return value.length > 22 ? `${value.slice(0, 19)}…` : value;
 }

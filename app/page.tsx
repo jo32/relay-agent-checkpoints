@@ -16,6 +16,7 @@ export default async function Home() {
     <RelayDashboard
       displayName={user?.displayName ?? "Jo"}
       email={user?.email ?? "Local workspace"}
+      isLocalPreview={!user}
     />
   );
 }

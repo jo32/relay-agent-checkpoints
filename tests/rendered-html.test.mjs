@@ -47,10 +47,10 @@ test("server-renders the Relay product shell", async () => {
 
   const html = await response.text();
   assert.match(html, /<title>Relay — Portable agent checkpoints<\/title>/i);
-  assert.match(html, /Your agents create checkpoints\. Relay keeps them ready\./);
+  assert.match(html, /Workspace continuity/);
   assert.match(html, /Connect skills/);
-  assert.match(html, /Checkpoint lineage/);
-  assert.match(html, /Recent checkpoints/);
+  assert.match(html, /Checkpoint registry/);
+  assert.match(html, /Latest checkpoint/);
   assert.doesNotMatch(html, /Agent runners|Use runner|Start a handoff/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
@@ -58,7 +58,7 @@ test("server-renders the Relay product shell", async () => {
 test("includes accessible product landmarks", async () => {
   const response = await render();
   const html = await response.text();
-  assert.match(html, /<main[^>]*class="main-shell"/);
+  assert.match(html, /<main[^>]*class="relay-main"/);
   assert.match(html, /<nav[^>]*aria-label="Primary"/);
   assert.match(html, /aria-label="Workspace overview"/);
   assert.match(html, /aria-label="Search checkpoints"/);
