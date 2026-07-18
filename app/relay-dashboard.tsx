@@ -311,7 +311,11 @@ function GlobalHeader({
           <Menu size={18} />
         </button>
         <Link className="relay-brand" href="/" aria-label="Relay home">
-          <span className="relay-triangle" aria-hidden="true" />
+          <span className="relay-mark" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
           <strong>Relay</strong>
         </Link>
         <span className="header-divider" />
@@ -490,10 +494,10 @@ function CheckpointsView({
       />
 
       <section className="stat-grid" aria-label="Workspace overview">
-        <Stat label="Checkpoints" value={String(allCheckpoints.length)} icon={Archive} />
-        <Stat label="Workspaces" value={String(workspaceCount)} icon={Folder} />
-        <Stat label="Archive storage" value={formatBytes(totalBytes)} icon={HardDrive} />
-        <Stat label="Files excluded" value={formatNumber(protectedFiles)} icon={ShieldCheck} />
+        <Stat label="Checkpoints" value={String(allCheckpoints.length)} icon={Archive} tone="lavender" />
+        <Stat label="Workspaces" value={String(workspaceCount)} icon={Folder} tone="peach" />
+        <Stat label="Archive storage" value={formatBytes(totalBytes)} icon={HardDrive} tone="sky" />
+        <Stat label="Files excluded" value={formatNumber(protectedFiles)} icon={ShieldCheck} tone="mint" />
       </section>
 
       {latest && (
@@ -587,16 +591,18 @@ function Stat({
   label,
   value,
   icon: Icon,
+  tone,
 }: {
   label: string;
   value: string;
   icon: typeof Archive;
+  tone: "lavender" | "peach" | "sky" | "mint";
 }) {
   return (
-    <article className="stat">
+    <article className={`stat ${tone}`}>
       <div>
         <span>{label}</span>
-        <Icon size={15} />
+        <span className="stat-icon"><Icon size={15} /></span>
       </div>
       <strong>{value}</strong>
     </article>
