@@ -15,9 +15,9 @@ from relay_crypto import (
     RelayCryptoError,
     decrypt_checkpoint,
     is_encrypted_checkpoint,
+    prompt_checkpoint_key,
     read_encrypted_header,
 )
-from relay_keystore import KeyStoreError, load_checkpoint_key
 
 
 def parse_args() -> argparse.Namespace:
@@ -25,11 +25,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("archive", type=Path)
     parser.add_argument("--verify", action="store_true")
     parser.add_argument("--show-excluded", action="store_true")
-    parser.add_argument(
-        "--key-file",
-        type=Path,
-        help="Explicit mode-600 recovery key file instead of the OS credential vault",
-    )
     parser.add_argument("--json", action="store_true", dest="json_output")
     return parser.parse_args()
 
@@ -41,7 +36,6 @@ def main() -> int:
         raise SystemExit(f"Archive not found: {archive_path}")
 
     encrypted = is_encrypted_checkpoint(archive_path)
-    key_store: str | None = None
     header: dict[str, object] | None = None
     with tempfile.TemporaryDirectory(prefix="relay-inspect-") as temporary:
         inspect_path = archive_path
@@ -49,10 +43,7 @@ def main() -> int:
             try:
                 header = read_encrypted_header(archive_path)
                 checkpoint_id = str(header["checkpointId"])
-                key, key_store = load_checkpoint_key(
-                    checkpoint_id,
-                    args.key_file,
-                )
+                key = prompt_checkpoint_key()
                 inspect_path = Path(temporary) / "checkpoint.tar.gz"
                 decrypt_checkpoint(
                     archive_path,
@@ -60,7 +51,7 @@ def main() -> int:
                     key,
                     checkpoint_id,
                 )
-            except (RelayCryptoError, KeyStoreError) as error:
+            except RelayCryptoError as error:
                 raise SystemExit(str(error)) from error
 
         seen: set[str] = set()
@@ -123,7 +114,7 @@ def main() -> int:
         "encrypted": encrypted,
         "encryptionVersion": header.get("formatVersion") if header else 1,
         "cipher": header.get("cipher") if header else "none",
-        "keyStore": key_store,
+        "keyStored": False,
         "sidecarVerified": sidecar_ok,
         "checkpointId": manifest.get("checkpointId"),
         "workspace": manifest.get("workspace"),

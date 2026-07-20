@@ -5,7 +5,7 @@ description: Download, locally decrypt, and safely extract a Relay checkpoint in
 
 # Restore Agent Workspace
 
-Download one immutable encrypted checkpoint from Relay, retrieve its key locally, authenticate and decrypt it, validate it as untrusted input, and extract it into a new or empty workspace.
+Download one immutable encrypted checkpoint from Relay, ask the user for its key through a hidden local prompt, authenticate and decrypt it, validate it as untrusted input, and extract it into a new or empty workspace. The key is never stored or sent to Relay.
 
 ## Configure authenticated access
 
@@ -16,7 +16,7 @@ export RELAY_API_URL="https://your-relay-site"
 export RELAY_API_TOKEN="rly_..."
 ```
 
-An expiring Relay share URL does not require a token. A format-v2 share URL includes a `#relay-key=...` fragment that is consumed locally and never sent to Relay.
+An expiring Relay share URL does not require a token and never contains the encryption key.
 
 ## Download and restore
 
@@ -38,11 +38,11 @@ python3 scripts/download_checkpoint.py \
   --json
 ```
 
-Paste the complete share URL at the hidden prompt. This keeps its key fragment out of shell history and process arguments.
+Paste the share URL at the first hidden prompt. This keeps the private share token out of shell history and process arguments.
 
 Always restore into a new or empty destination. Never merge an archive directly into a live workspace.
 
-For private checkpoint IDs, the key is retrieved from macOS Keychain or Windows Credential Locker. For an explicitly managed recovery file, add `--key-file /secure/path/relay-keys.json`.
+For every encrypted checkpoint, enter its 43-character base64url key at the second hidden prompt. Never request the key in chat or place it in command arguments, environment variables, files, logs, or URLs. The restore skill does not remember, recover, or synchronize it.
 
 ## Mandatory validation
 

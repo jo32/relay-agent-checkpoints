@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import base64
+import getpass
 import json
 import re
+import secrets
 import shutil
 import struct
 import subprocess
@@ -27,7 +29,9 @@ def encode_key(key: bytes) -> str:
 
 def decode_key(value: str) -> bytes:
     if not re.fullmatch(r"[A-Za-z0-9_-]{43}", value.strip()):
-        raise RelayCryptoError("Checkpoint encryption key is invalid")
+        raise RelayCryptoError(
+            "Checkpoint encryption key must be a 43-character base64url value"
+        )
     try:
         padding = "=" * (-len(value.strip()) % 4)
         key = base64.urlsafe_b64decode(value.strip() + padding)
@@ -35,6 +39,17 @@ def decode_key(value: str) -> bytes:
         raise RelayCryptoError("Checkpoint encryption key is invalid") from error
     if len(key) != 32:
         raise RelayCryptoError("Checkpoint encryption key must be 32 bytes")
+    return key
+
+
+def prompt_checkpoint_key(*, confirm: bool = False) -> bytes:
+    key = decode_key(getpass.getpass("Checkpoint encryption key: "))
+    if confirm:
+        repeated = decode_key(
+            getpass.getpass("Confirm checkpoint encryption key: ")
+        )
+        if not secrets.compare_digest(key, repeated):
+            raise RelayCryptoError("Checkpoint encryption keys do not match")
     return key
 
 

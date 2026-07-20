@@ -20,14 +20,14 @@ export async function generateMetadata(): Promise<Metadata> {
       template: "%s · Relay",
     },
     description:
-      "Pause here. Continue anywhere. Relay stores zero-knowledge encrypted workspace checkpoints.",
+      "Pause here. Continue anywhere. Enter your key locally; Relay stores only encrypted workspace checkpoints.",
     icons: {
       icon: "/favicon.svg",
       shortcut: "/favicon.svg",
     },
     openGraph: {
       title: "Relay — Private agent checkpoints",
-      description: "Encrypted locally. Unreadable to Relay.",
+      description: "Your key is entered locally and never stored by Relay.",
       type: "website",
       images: [
         {
@@ -41,7 +41,7 @@ export async function generateMetadata(): Promise<Metadata> {
     twitter: {
       card: "summary_large_image",
       title: "Relay — Private agent checkpoints",
-      description: "Encrypted locally. Unreadable to Relay.",
+      description: "Your key is entered locally and never stored by Relay.",
       images: [socialImage],
     },
   };

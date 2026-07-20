@@ -17,15 +17,10 @@ from pathlib import Path, PurePosixPath
 
 from relay_crypto import (
     RelayCryptoError,
-    decode_key,
     decrypt_checkpoint,
     is_encrypted_checkpoint,
+    prompt_checkpoint_key,
     read_encrypted_header,
-)
-from relay_keystore import (
-    KeyStoreError,
-    load_checkpoint_key,
-    remember_shared_key,
 )
 
 MAX_MEMBERS = 100_000
@@ -43,16 +38,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--api-url", default=os.environ.get("RELAY_API_URL"))
     parser.add_argument("--api-token", default=os.environ.get("RELAY_API_TOKEN"))
     parser.add_argument("--keep-archive", type=Path)
-    parser.add_argument(
-        "--key-file",
-        type=Path,
-        help="Explicit mode-600 recovery key file instead of the OS credential vault",
-    )
-    parser.add_argument(
-        "--no-store-shared-key",
-        action="store_true",
-        help="Do not remember a key received in a share-link fragment",
-    )
     parser.add_argument("--json", action="store_true", dest="json_output")
     return parser.parse_args()
 
@@ -71,7 +56,7 @@ def main() -> int:
     if destination.exists() and any(destination.iterdir()):
         raise SystemExit(f"Destination must be empty: {destination}")
 
-    url, needs_token, shared_key = checkpoint_url(checkpoint_input, args.api_url)
+    url, needs_token = checkpoint_url(checkpoint_input, args.api_url)
     if needs_token and not args.api_token:
         raise SystemExit(
             "A checkpoint ID requires RELAY_API_TOKEN "
@@ -96,7 +81,6 @@ def main() -> int:
             )
 
         encrypted = is_encrypted_checkpoint(downloaded_path)
-        key_store: str | None = None
         checkpoint_id: str | None = None
         archive_path = downloaded_path
         if encrypted:
@@ -115,14 +99,7 @@ def main() -> int:
                     raise RelayCryptoError(
                         "Encrypted checkpoint ID does not match Relay metadata"
                     )
-                if shared_key:
-                    key = shared_key
-                    key_store = "share URL fragment"
-                else:
-                    key, key_store = load_checkpoint_key(
-                        checkpoint_id,
-                        args.key_file,
-                    )
+                key = prompt_checkpoint_key()
                 archive_path = Path(temporary) / "checkpoint.tar.gz"
                 decrypt_checkpoint(
                     downloaded_path,
@@ -130,28 +107,10 @@ def main() -> int:
                     key,
                     checkpoint_id,
                 )
-            except (RelayCryptoError, KeyStoreError) as error:
+            except RelayCryptoError as error:
                 raise SystemExit(str(error)) from error
-        elif shared_key:
-            raise SystemExit(
-                "Share link contains an encryption key but Relay returned plaintext"
-            )
 
         result = restore_archive(archive_path, destination)
-        if (
-            encrypted
-            and shared_key
-            and checkpoint_id
-            and not args.no_store_shared_key
-        ):
-            try:
-                key_store = remember_shared_key(
-                    checkpoint_id,
-                    shared_key,
-                    args.key_file,
-                )
-            except KeyStoreError as error:
-                key_store = f"share URL fragment; not stored ({error})"
         result.update(
             {
                 "downloadUrl": url,
@@ -159,7 +118,7 @@ def main() -> int:
                 "encrypted": encrypted,
                 "encryptionVersion": 2 if encrypted else 1,
                 "cipher": "AES-256-GCM" if encrypted else "none",
-                "keyStore": key_store,
+                "keyStored": False,
             }
         )
         if args.keep_archive:
@@ -176,7 +135,7 @@ def main() -> int:
             f"to {result['destination']}"
         )
         if result["encrypted"]:
-            print(f"Decrypted with: {result['keyStore']}")
+            print("Encryption key: entered interactively and not stored.")
         print(f"Read the handoff: {result['handoff']}")
     return 0
 
@@ -184,21 +143,11 @@ def main() -> int:
 def checkpoint_url(
     checkpoint: str,
     api_url: str | None,
-) -> tuple[str, bool, bytes | None]:
+) -> tuple[str, bool]:
     parsed = urllib.parse.urlparse(checkpoint)
     if parsed.scheme in {"http", "https"} and parsed.netloc:
-        fragment = urllib.parse.parse_qs(parsed.fragment, strict_parsing=False)
-        encoded_keys = fragment.get("relay-key", [])
-        shared_key: bytes | None = None
-        if encoded_keys:
-            if len(encoded_keys) != 1:
-                raise SystemExit("Share link has more than one encryption key")
-            try:
-                shared_key = decode_key(encoded_keys[0])
-            except RelayCryptoError as error:
-                raise SystemExit(str(error)) from error
         clean_url = urllib.parse.urlunparse(parsed._replace(fragment=""))
-        return clean_url, False, shared_key
+        return clean_url, False
     if not checkpoint.startswith("cp_"):
         raise SystemExit("Checkpoint must be a Relay cp_ ID or an HTTPS share URL")
     if not api_url:
@@ -209,7 +158,6 @@ def checkpoint_url(
         f"{api_url.rstrip('/')}/api/checkpoints/"
         f"{urllib.parse.quote(checkpoint, safe='')}/download",
         True,
-        None,
     )
 
 

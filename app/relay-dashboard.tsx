@@ -369,7 +369,7 @@ function GlobalHeader({
       </label>
 
       <div className="header-account">
-        <span>Zero-knowledge checkpoint registry</span>
+        <span>User-keyed checkpoint registry</span>
         <span className="avatar">{initials(displayName)}</span>
       </div>
     </header>
@@ -529,7 +529,7 @@ function CheckpointsView({
         description={
           workspaceFilter
             ? `Immutable history for ${workspaceFilter}.`
-            : "End-to-end encrypted workspace archives that Relay cannot inspect or decrypt."
+            : "Workspace archives encrypted with a key you enter locally and Relay never stores."
         }
         action={
           <button className="button primary" type="button" onClick={onConnect}>
@@ -569,7 +569,7 @@ function CheckpointsView({
               </div>
             </div>
             <dl className="latest-meta">
-              <div><dt>Metadata</dt><dd>Encrypted locally</dd></div>
+              <div><dt>Metadata</dt><dd>User-keyed locally</dd></div>
               <div><dt>Cipher</dt><dd>{latest.cipher}</dd></div>
               <div><dt>Checkpoint</dt><dd className="mono">{latest.id}</dd></div>
               <div><dt>Integrity</dt><dd className="mono">{shortChecksum(latest.checksum)}</dd></div>
@@ -799,7 +799,7 @@ function SharedView({
       <PageHeading
         eyebrow="Collaboration"
         title="Shared links"
-        description="Create an expiring link whose decryption key stays in the URL fragment."
+        description="Create an expiring link with no encryption key inside it."
       />
 
       <section className="security-note">
@@ -807,13 +807,13 @@ function SharedView({
         <div>
           <h2>Relay never receives the decryption key.</h2>
           <p>
-            The local sharing command appends the key after the URL’s # character.
-            Restore decrypts locally, then verifies every archive path and file hash.
+            Send the link and your key separately. Restore asks for the key through
+            a hidden local prompt, decrypts, and verifies every path and file hash.
           </p>
         </div>
         <div className="security-facts">
-          <span><Check size={13} /> Fragment-held key</span>
-          <span><Check size={13} /> Encrypted bytes</span>
+          <span><Check size={13} /> No key in link</span>
+          <span><Check size={13} /> No stored key</span>
           <span><Check size={13} /> Verified restore</span>
         </div>
       </section>
@@ -822,7 +822,7 @@ function SharedView({
         <div className="section-title-row">
           <div>
             <h2>Ready to share</h2>
-            <p>Generate a new link when you need to hand off a checkpoint.</p>
+            <p>Generate a link, then provide the encryption key separately.</p>
           </div>
         </div>
         <div className="share-table">
@@ -997,8 +997,8 @@ function SkillIntegrationModal({ onClose }: { onClose: () => void }) {
           <div className="modal-note">
             <Database size={17} />
             <p>
-              The skill encrypts locally with AES-256-GCM. Relay stores only
-              ciphertext and opaque routing metadata, never the key or handoff.
+              Enter and confirm your 43-character encryption key through the
+              hidden local prompt. Relay and the skills never store it.
             </p>
           </div>
 
@@ -1032,7 +1032,7 @@ function SkillIntegrationModal({ onClose }: { onClose: () => void }) {
                 <span>2</span>
                 <div>
                   <h3>Create and upload</h3>
-                  <p>Sanitize, encrypt locally, then upload ciphertext.</p>
+                  <p>Enter your key, encrypt locally, then upload ciphertext.</p>
                 </div>
                 <UploadCloud size={17} />
               </div>
@@ -1048,7 +1048,7 @@ function SkillIntegrationModal({ onClose }: { onClose: () => void }) {
                 <span>3</span>
                 <div>
                   <h3>Download and restore</h3>
-                  <p>Fetch the OS-held key, decrypt, verify, then extract.</p>
+                  <p>Enter the same key, decrypt, verify, then extract.</p>
                 </div>
                 <ArrowDownToLine size={17} />
               </div>
@@ -1065,7 +1065,7 @@ function SkillIntegrationModal({ onClose }: { onClose: () => void }) {
         </div>
 
         <footer className="modal-footer">
-          <span><ShieldCheck size={14} /> Sanitized · Encrypted · Zero-knowledge</span>
+          <span><ShieldCheck size={14} /> User-keyed · Never stored · Zero-knowledge</span>
           <button className="button primary" type="button" onClick={onClose}>Done</button>
         </footer>
       </section>
@@ -1116,7 +1116,7 @@ async function shareCheckpoint(
       "python3 .agents/skills/agent-workspace-checkpoint/scripts/create_share.py " +
         `--checkpoint ${checkpoint.id}`,
     );
-    setToast("Zero-knowledge share command copied.");
+    setToast("Keyless share command copied.");
   } catch {
     setToast("Clipboard access is unavailable.");
   }
@@ -1128,7 +1128,7 @@ async function copyRestorePrompt(
 ) {
   try {
     await copyText(
-      `Use $restore-agent-workspace to download Relay checkpoint ${checkpoint.id} and extract it into a new workspace.`,
+      `Use $restore-agent-workspace to download Relay checkpoint ${checkpoint.id}, prompt me locally for its encryption key, and extract it into a new workspace.`,
     );
     setToast("Restore-skill prompt copied.");
   } catch {

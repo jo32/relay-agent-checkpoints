@@ -59,7 +59,10 @@ test("server-renders the Relay product shell", async () => {
   assert.match(html, /Connect skills/);
   assert.match(html, /Checkpoint registry/);
   assert.match(html, /Latest checkpoint/);
+  assert.match(html, /User-keyed checkpoint registry/);
+  assert.match(html, /key you enter locally and Relay never stores/);
   assert.doesNotMatch(html, /Agent runners|Use runner|Start a handoff/);
+  assert.doesNotMatch(html, /Keychain|Credential Locker|OS-held key|URL fragment/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
 

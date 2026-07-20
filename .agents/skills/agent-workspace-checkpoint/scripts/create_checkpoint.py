@@ -23,11 +23,10 @@ from checkpoint_lib import (
     select_files,
     sha256_file,
 )
-from relay_crypto import RelayCryptoError, encrypt_checkpoint
-from relay_keystore import (
-    KeyStoreError,
-    generate_checkpoint_key,
-    store_checkpoint_key,
+from relay_crypto import (
+    RelayCryptoError,
+    encrypt_checkpoint,
+    prompt_checkpoint_key,
 )
 
 
@@ -44,11 +43,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--upload", action="store_true")
     parser.add_argument("--api-url", default=os.environ.get("RELAY_API_URL"))
     parser.add_argument("--api-token", default=os.environ.get("RELAY_API_TOKEN"))
-    parser.add_argument(
-        "--key-file",
-        type=Path,
-        help="Explicit mode-600 recovery key file instead of the OS credential vault",
-    )
     parser.add_argument("--json", action="store_true", dest="json_output")
     return parser.parse_args()
 
@@ -75,9 +69,6 @@ def main() -> int:
         else Path.home() / ".agent-checkpoints" / safe_slug(root.name)
     )
     archive_path = output_dir / f"{timestamp}-{safe_slug(label)}.relay"
-    key_file = args.key_file.expanduser().resolve() if args.key_file else None
-    if key_file and (key_file == root or root in key_file.parents):
-        raise SystemExit("Recovery key files must be stored outside the project")
     if args.upload and (not args.api_url or not args.api_token):
         raise SystemExit(
             "Upload requires RELAY_API_URL and RELAY_API_TOKEN "
@@ -152,6 +143,7 @@ def main() -> int:
         "encrypted": True,
         "encryptionVersion": 2,
         "cipher": "AES-256-GCM",
+        "keyStored": False,
         "dryRun": args.dry_run,
         "uploaded": False,
         "exclusions": [{"path": item.path, "reason": item.reason} for item in excluded],
@@ -159,7 +151,10 @@ def main() -> int:
 
     if not args.dry_run:
         output_dir.mkdir(parents=True, exist_ok=True)
-        checkpoint_key = generate_checkpoint_key()
+        try:
+            checkpoint_key = prompt_checkpoint_key(confirm=True)
+        except RelayCryptoError as error:
+            raise SystemExit(str(error)) from error
         try:
             with tempfile.TemporaryDirectory(
                 prefix="relay-checkpoint-"
@@ -205,12 +200,7 @@ def main() -> int:
                     checkpoint_id,
                     checkpoint_key,
                 )
-            key_store = store_checkpoint_key(
-                checkpoint_id,
-                checkpoint_key,
-                key_file,
-            )
-        except (RelayCryptoError, KeyStoreError) as error:
+        except RelayCryptoError as error:
             archive_path.unlink(missing_ok=True)
             raise SystemExit(str(error)) from error
 
@@ -219,7 +209,6 @@ def main() -> int:
         sidecar.write_text(f"{archive_hash}  {archive_path.name}\n", encoding="utf-8")
         summary["archiveSha256"] = f"sha256:{archive_hash}"
         summary["sidecar"] = str(sidecar)
-        summary["keyStore"] = key_store
         if args.upload:
             upload_result = upload_checkpoint(
                 archive_path=archive_path,
@@ -240,7 +229,7 @@ def main() -> int:
         if not args.dry_run:
             print(f"Archive: {archive_path}")
             print(f"Checksum: {summary['archiveSha256']}")
-            print(f"Encryption key: {summary['keyStore']}")
+            print("Encryption key: not stored; enter the same key to restore.")
             if summary["uploaded"]:
                 print(f"Relay checkpoint: {summary['relay']['checkpoint']['id']}")
         if excluded:

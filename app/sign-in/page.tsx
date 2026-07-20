@@ -52,7 +52,7 @@ export default async function SignInPage() {
         )}
 
         <p className="auth-legal">
-          Your archives stay private unless you create an expiring share link.
+          Share links never contain your encryption key.
         </p>
       </section>
     </main>

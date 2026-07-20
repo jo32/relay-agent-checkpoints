@@ -6,7 +6,7 @@ import RelayDashboard from "./relay-dashboard";
 export const metadata: Metadata = {
   title: { absolute: "Relay — Private agent checkpoints" },
   description:
-    "Store, share, and restore end-to-end encrypted workspace checkpoints.",
+    "Store, share, and restore workspace checkpoints encrypted with a user-managed key.",
 };
 
 export const dynamic = "force-dynamic";
