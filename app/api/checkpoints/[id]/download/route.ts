@@ -1,10 +1,10 @@
 import { NextRequest } from "next/server";
-import { getChatGPTUser } from "../../../../chatgpt-auth";
 import {
   authenticateApiToken,
   findCheckpoint,
   getRuntimeEnv,
 } from "../../../../../db/checkpoints";
+import { getCurrentPrincipal } from "../../../../../lib/principal";
 
 export const dynamic = "force-dynamic";
 
@@ -13,11 +13,14 @@ export async function GET(
   context: { params: Promise<{ id: string }> },
 ) {
   const { id } = await context.params;
-  const user = await getChatGPTUser();
-  const tokenOwner = await authenticateApiToken(request);
+  const tokenPrincipal = await authenticateApiToken(request, "checkpoints:read");
+  const browserPrincipal = tokenPrincipal ? null : await getCurrentPrincipal();
+  if (!tokenPrincipal && !browserPrincipal) {
+    return Response.json({ error: "Sign in to download this checkpoint." }, { status: 401 });
+  }
   const checkpoint = await findCheckpoint(
     id,
-    tokenOwner ?? user?.email ?? "local-preview",
+    tokenPrincipal?.tenantId ?? browserPrincipal!.tenantId,
   );
 
   if (!checkpoint) {

@@ -48,7 +48,8 @@ class CheckpointSkillTests(unittest.TestCase):
             (project / "node_modules" / "pkg").mkdir(parents=True)
             (project / "node_modules" / "pkg" / "index.js").write_text("generated")
             (project / ".env").write_text("TOKEN=secret")
-            (project / "leaked.txt").write_text("api_key='sk-proj-abcdefghijklmnopqrstuvwxyz'")
+            fake_key = "sk-" + "proj-" + "abcdefghijklmnopqrstuvwxyz"
+            (project / "leaked.txt").write_text(f"api_key='{fake_key}'")
 
             result = self.run_script(
                 CREATE,

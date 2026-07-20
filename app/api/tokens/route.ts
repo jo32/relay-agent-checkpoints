@@ -1,11 +1,20 @@
-import { getChatGPTUser } from "../../chatgpt-auth";
 import { issueApiToken } from "../../../db/checkpoints";
+import {
+  getCurrentPrincipal,
+  isSameOriginRequest,
+} from "../../../lib/principal";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
-  const user = await getChatGPTUser();
-  const ownerKey = user?.email ?? "local-preview";
+  const principal = await getCurrentPrincipal();
+  if (!principal) {
+    return Response.json({ error: "Sign in to create an API token." }, { status: 401 });
+  }
+  if (principal.source !== "local" && !isSameOriginRequest(request)) {
+    return Response.json({ error: "Invalid request origin." }, { status: 403 });
+  }
+
   let label = "Agent checkpoint skills";
   try {
     const payload = (await request.json()) as { label?: string };
@@ -15,7 +24,11 @@ export async function POST(request: Request) {
   }
 
   try {
-    const token = await issueApiToken(ownerKey, label);
+    const token = await issueApiToken(
+      principal.tenantId,
+      principal.userId,
+      label,
+    );
     return Response.json(token, {
       status: 201,
       headers: { "cache-control": "no-store" },

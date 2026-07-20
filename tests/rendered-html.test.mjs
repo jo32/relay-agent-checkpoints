@@ -11,7 +11,14 @@ let serverOutput = "";
 before(async () => {
   server = spawn("npm", ["run", "dev", "--", "--port", String(port)], {
     cwd: new URL("../", import.meta.url),
-    env: { ...process.env, NO_COLOR: "1" },
+    env: {
+      ...process.env,
+      BETTER_AUTH_SECRET:
+        "relay-rendered-html-test-secret-is-at-least-32-characters",
+      BETTER_AUTH_URL: origin,
+      NO_COLOR: "1",
+      RELAY_LOCAL_PREVIEW: "true",
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   server.stdout.on("data", (chunk) => {

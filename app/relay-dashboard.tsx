@@ -16,6 +16,7 @@ import {
   KeyRound,
   Link2,
   Loader2,
+  LogOut,
   Menu,
   RefreshCw,
   Search,
@@ -29,6 +30,8 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { authClient } from "../lib/auth-client";
+import type { AuthSource } from "../lib/principal";
 
 type Checkpoint = {
   id: string;
@@ -100,10 +103,14 @@ const previewCheckpoints: Checkpoint[] = [
 export default function RelayDashboard({
   displayName,
   email,
+  organizationName,
+  authSource,
   isLocalPreview,
 }: {
   displayName: string;
   email: string;
+  organizationName: string;
+  authSource: AuthSource;
   isLocalPreview: boolean;
 }) {
   const [view, setView] = useState<View>("checkpoints");
@@ -193,10 +200,21 @@ export default function RelayDashboard({
     setMobileNavOpen(false);
   }
 
+  async function signOut() {
+    if (authSource === "chatgpt") {
+      window.location.assign("/signout-with-chatgpt?return_to=%2Fsign-in");
+      return;
+    }
+    if (authSource === "local") return;
+    await authClient.signOut();
+    window.location.assign("/sign-in");
+  }
+
   return (
     <div className="relay-shell">
       <GlobalHeader
         displayName={displayName}
+        organizationName={organizationName}
         search={search}
         searchRef={searchRef}
         onSearch={setSearch}
@@ -206,6 +224,7 @@ export default function RelayDashboard({
       <div className="relay-body">
         <Sidebar
           email={email}
+          showSignOut={authSource !== "local"}
           view={view}
           workspaceNames={workspaceNames}
           activeWorkspace={workspaceFilter}
@@ -215,6 +234,7 @@ export default function RelayDashboard({
           onView={selectView}
           onWorkspace={openWorkspace}
           onConnect={() => setIntegrationOpen(true)}
+          onSignOut={() => void signOut()}
         />
 
         <main className="relay-main">
@@ -288,12 +308,14 @@ export default function RelayDashboard({
 
 function GlobalHeader({
   displayName,
+  organizationName,
   search,
   searchRef,
   onSearch,
   onOpenNav,
 }: {
   displayName: string;
+  organizationName: string;
   search: string;
   searchRef: React.RefObject<HTMLInputElement | null>;
   onSearch: (value: string) => void;
@@ -320,7 +342,7 @@ function GlobalHeader({
         </Link>
         <span className="header-divider" />
         <span className="team-switcher">
-          Personal
+          {organizationName}
           <ChevronDown size={14} />
         </span>
       </div>
@@ -348,6 +370,7 @@ function GlobalHeader({
 
 function Sidebar({
   email,
+  showSignOut,
   view,
   workspaceNames,
   activeWorkspace,
@@ -357,8 +380,10 @@ function Sidebar({
   onView,
   onWorkspace,
   onConnect,
+  onSignOut,
 }: {
   email: string;
+  showSignOut: boolean;
   view: View;
   workspaceNames: string[];
   activeWorkspace: string | null;
@@ -368,6 +393,7 @@ function Sidebar({
   onView: (view: View) => void;
   onWorkspace: (workspace: string) => void;
   onConnect: () => void;
+  onSignOut: () => void;
 }) {
   const navigation = [
     { id: "checkpoints" as const, label: "Checkpoints", icon: Archive },
@@ -441,9 +467,22 @@ function Sidebar({
               <small>{storageOnline ? "D1 metadata · R2 archives" : "Retry from the status banner"}</small>
             </div>
           </div>
-          <div className="account-email">
-            <Settings size={15} />
-            <span>{email}</span>
+          <div className="account-row">
+            <div className="account-email">
+              <Settings size={15} />
+              <span>{email}</span>
+            </div>
+            {showSignOut && (
+              <button
+                className="sign-out-button"
+                type="button"
+                aria-label="Sign out"
+                title="Sign out"
+                onClick={onSignOut}
+              >
+                <LogOut size={14} />
+              </button>
+            )}
           </div>
         </div>
       </aside>

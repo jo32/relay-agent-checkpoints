@@ -1,8 +1,11 @@
-import { getChatGPTUser } from "../../../../chatgpt-auth";
 import {
   authenticateApiToken,
   createShareToken,
 } from "../../../../../db/checkpoints";
+import {
+  getCurrentPrincipal,
+  isSameOriginRequest,
+} from "../../../../../lib/principal";
 
 export const dynamic = "force-dynamic";
 
@@ -11,11 +14,22 @@ export async function POST(
   context: { params: Promise<{ id: string }> },
 ) {
   const { id } = await context.params;
-  const user = await getChatGPTUser();
-  const tokenOwner = await authenticateApiToken(request);
+  const tokenPrincipal = await authenticateApiToken(request, "checkpoints:share");
+  const browserPrincipal = tokenPrincipal ? null : await getCurrentPrincipal();
+  if (!tokenPrincipal && !browserPrincipal) {
+    return Response.json({ error: "Sign in to share a checkpoint." }, { status: 401 });
+  }
+  if (
+    browserPrincipal &&
+    browserPrincipal.source !== "local" &&
+    !isSameOriginRequest(request)
+  ) {
+    return Response.json({ error: "Invalid request origin." }, { status: 403 });
+  }
+
   const share = await createShareToken(
     id,
-    tokenOwner ?? user?.email ?? "local-preview",
+    tokenPrincipal?.tenantId ?? browserPrincipal!.tenantId,
   );
 
   if (!share) {

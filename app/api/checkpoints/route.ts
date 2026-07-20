@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getChatGPTUser } from "../../chatgpt-auth";
+import { getCurrentPrincipal } from "../../../lib/principal";
 import {
   authenticateApiToken,
   findCheckpoint,
@@ -11,14 +11,16 @@ import {
 export const dynamic = "force-dynamic";
 
 const MAX_ARCHIVE_BYTES = 100 * 1024 * 1024;
-async function ownerKey() {
-  const user = await getChatGPTUser();
-  return user?.email ?? "local-preview";
-}
 
 export async function GET() {
   try {
-    return NextResponse.json({ checkpoints: await listCheckpoints(await ownerKey()) });
+    const principal = await getCurrentPrincipal();
+    if (!principal) {
+      return NextResponse.json({ error: "Sign in to view checkpoints." }, { status: 401 });
+    }
+    return NextResponse.json({
+      checkpoints: await listCheckpoints(principal.tenantId),
+    });
   } catch (error) {
     console.error("Unable to list checkpoints", error);
     return NextResponse.json(
@@ -29,8 +31,8 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const owner = await authenticateApiToken(request);
-  if (!owner) {
+  const credential = await authenticateApiToken(request, "checkpoints:write");
+  if (!credential) {
     return NextResponse.json(
       { error: "A valid Relay API token is required." },
       { status: 401 },
@@ -74,9 +76,9 @@ export async function POST(request: NextRequest) {
   const id = /^cp_[a-z0-9_-]{6,80}$/i.test(requestedId)
     ? requestedId
     : `cp_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
-  const objectKey = `${encodeURIComponent(owner)}/${id}.tar.gz`;
+  const objectKey = `${encodeURIComponent(credential.tenantId)}/${id}.tar.gz`;
   const createdAt = new Date().toISOString();
-  if (await findCheckpoint(id, owner)) {
+  if (await findCheckpoint(id, credential.tenantId)) {
     return NextResponse.json(
       { error: "This checkpoint already exists." },
       { status: 409 },
@@ -96,7 +98,9 @@ export async function POST(request: NextRequest) {
 
     await insertCheckpoint({
       id,
-      ownerKey: owner,
+      ownerKey: credential.tenantId,
+      tenantId: credential.tenantId,
+      createdByUserId: credential.userId,
       workspaceName,
       label,
       sourceAgent,

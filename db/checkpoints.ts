@@ -1,8 +1,11 @@
 import { env } from "cloudflare:workers";
+import { ensureRelaySchema } from "./identity";
 
 export type CheckpointRecord = {
   id: string;
   ownerKey: string;
+  tenantId: string;
+  createdByUserId: string | null;
   workspaceName: string;
   label: string;
   sourceAgent: string;
@@ -24,6 +27,18 @@ type RuntimeEnv = {
   CHECKPOINTS: R2Bucket;
 };
 
+export type ApiTokenPrincipal = {
+  tenantId: string;
+  userId: string | null;
+  scopes: string[];
+};
+
+const DEFAULT_TOKEN_SCOPES = [
+  "checkpoints:read",
+  "checkpoints:write",
+  "checkpoints:share",
+] as const;
+
 export function getRuntimeEnv(): RuntimeEnv {
   const runtime = env as unknown as Partial<RuntimeEnv>;
   if (!runtime.DB || !runtime.CHECKPOINTS) {
@@ -33,49 +48,10 @@ export function getRuntimeEnv(): RuntimeEnv {
 }
 
 export async function ensureCheckpointSchema(db: D1Database) {
-  await db.batch([
-    db
-      .prepare(
-        `CREATE TABLE IF NOT EXISTS checkpoints (
-          id TEXT PRIMARY KEY,
-          owner_key TEXT NOT NULL,
-          workspace_name TEXT NOT NULL,
-          label TEXT NOT NULL,
-          source_agent TEXT NOT NULL,
-          status TEXT NOT NULL DEFAULT 'ready',
-          created_at TEXT NOT NULL,
-          size_bytes INTEGER NOT NULL,
-          file_count INTEGER NOT NULL,
-          excluded_count INTEGER NOT NULL,
-          parent_id TEXT,
-          handoff TEXT NOT NULL DEFAULT '',
-          object_key TEXT NOT NULL,
-          checksum TEXT NOT NULL,
-          share_token TEXT,
-          share_expires_at TEXT
-        )`,
-      ),
-    db
-      .prepare(
-        "CREATE INDEX IF NOT EXISTS checkpoints_owner_created_idx ON checkpoints(owner_key, created_at DESC)",
-      ),
-    db.prepare(
-      `CREATE TABLE IF NOT EXISTS api_tokens (
-        token_hash TEXT PRIMARY KEY,
-        token_prefix TEXT NOT NULL,
-        owner_key TEXT NOT NULL,
-        label TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        last_used_at TEXT
-      )`,
-    ),
-    db.prepare(
-      "CREATE INDEX IF NOT EXISTS api_tokens_owner_idx ON api_tokens(owner_key)",
-    ),
-  ]);
+  await ensureRelaySchema(db);
 }
 
-export async function listCheckpoints(ownerKey: string) {
+export async function listCheckpoints(tenantId: string) {
   const { DB } = getRuntimeEnv();
   await ensureCheckpointSchema(DB);
   const result = await DB.prepare(
@@ -93,12 +69,17 @@ export async function listCheckpoints(ownerKey: string) {
       handoff,
       checksum
     FROM checkpoints
-    WHERE owner_key = ?
+    WHERE COALESCE(tenant_id, owner_key) = ?
     ORDER BY created_at DESC
     LIMIT 50`,
   )
-    .bind(ownerKey)
-    .all<Omit<CheckpointRecord, "ownerKey" | "objectKey">>();
+    .bind(tenantId)
+    .all<
+      Omit<
+        CheckpointRecord,
+        "ownerKey" | "tenantId" | "createdByUserId" | "objectKey"
+      >
+    >();
 
   return result.results ?? [];
 }
@@ -108,14 +89,17 @@ export async function insertCheckpoint(record: CheckpointRecord) {
   await ensureCheckpointSchema(DB);
   await DB.prepare(
     `INSERT INTO checkpoints (
-      id, owner_key, workspace_name, label, source_agent, status, created_at,
+      id, owner_key, tenant_id, created_by_user_id,
+      workspace_name, label, source_agent, status, created_at,
       size_bytes, file_count, excluded_count, parent_id, handoff, object_key, checksum,
       share_token, share_expires_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       record.id,
       record.ownerKey,
+      record.tenantId,
+      record.createdByUserId,
       record.workspaceName,
       record.label,
       record.sourceAgent,
@@ -134,13 +118,15 @@ export async function insertCheckpoint(record: CheckpointRecord) {
     .run();
 }
 
-export async function findCheckpoint(id: string, ownerKey: string) {
+export async function findCheckpoint(id: string, tenantId: string) {
   const { DB } = getRuntimeEnv();
   await ensureCheckpointSchema(DB);
   return DB.prepare(
     `SELECT
       id,
       owner_key AS ownerKey,
+      COALESCE(tenant_id, owner_key) AS tenantId,
+      created_by_user_id AS createdByUserId,
       workspace_name AS workspaceName,
       label,
       source_agent AS sourceAgent,
@@ -154,22 +140,24 @@ export async function findCheckpoint(id: string, ownerKey: string) {
       object_key AS objectKey,
       checksum
     FROM checkpoints
-    WHERE id = ? AND owner_key = ?
+    WHERE id = ? AND COALESCE(tenant_id, owner_key) = ?
     LIMIT 1`,
   )
-    .bind(id, ownerKey)
+    .bind(id, tenantId)
     .first<CheckpointRecord>();
 }
 
-export async function createShareToken(id: string, ownerKey: string) {
+export async function createShareToken(id: string, tenantId: string) {
   const { DB } = getRuntimeEnv();
   await ensureCheckpointSchema(DB);
   const token = crypto.randomUUID().replaceAll("-", "");
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
   const result = await DB.prepare(
-    "UPDATE checkpoints SET share_token = ?, share_expires_at = ? WHERE id = ? AND owner_key = ?",
+    `UPDATE checkpoints
+    SET share_token = ?, share_expires_at = ?
+    WHERE id = ? AND COALESCE(tenant_id, owner_key) = ?`,
   )
-    .bind(token, expiresAt, id, ownerKey)
+    .bind(token, expiresAt, id, tenantId)
     .run();
 
   return result.meta.changes > 0 ? { token, expiresAt } : null;
@@ -182,6 +170,8 @@ export async function findSharedCheckpoint(token: string) {
     `SELECT
       id,
       owner_key AS ownerKey,
+      COALESCE(tenant_id, owner_key) AS tenantId,
+      created_by_user_id AS createdByUserId,
       workspace_name AS workspaceName,
       label,
       source_agent AS sourceAgent,
@@ -204,7 +194,11 @@ export async function findSharedCheckpoint(token: string) {
     .first<CheckpointRecord>();
 }
 
-export async function issueApiToken(ownerKey: string, label: string) {
+export async function issueApiToken(
+  tenantId: string,
+  userId: string,
+  label: string,
+) {
   const { DB } = getRuntimeEnv();
   await ensureCheckpointSchema(DB);
   const token = `rly_${crypto.randomUUID().replaceAll("-", "")}${crypto
@@ -212,14 +206,27 @@ export async function issueApiToken(ownerKey: string, label: string) {
     .replaceAll("-", "")}`;
   const tokenHash = await hashToken(token);
   const createdAt = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
+  const scopes = DEFAULT_TOKEN_SCOPES.join(" ");
   await DB.prepare(
     `INSERT INTO api_tokens (
-      token_hash, token_prefix, owner_key, label, created_at, last_used_at
-    ) VALUES (?, ?, ?, ?, ?, NULL)`,
+      token_hash, token_prefix, owner_key, tenant_id, created_by_user_id,
+      label, scopes, created_at, last_used_at, expires_at, revoked_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL)`,
   )
-    .bind(tokenHash, token.slice(0, 12), ownerKey, label, createdAt)
+    .bind(
+      tokenHash,
+      token.slice(0, 12),
+      tenantId,
+      tenantId,
+      userId,
+      label,
+      scopes,
+      createdAt,
+      expiresAt,
+    )
     .run();
-  return { token, prefix: token.slice(0, 12), createdAt };
+  return { token, prefix: token.slice(0, 12), createdAt, expiresAt, scopes };
 }
 
 export async function ownerForApiToken(token: string) {
@@ -228,21 +235,43 @@ export async function ownerForApiToken(token: string) {
   await ensureCheckpointSchema(DB);
   const tokenHash = await hashToken(token);
   const record = await DB.prepare(
-    "SELECT owner_key AS ownerKey FROM api_tokens WHERE token_hash = ? LIMIT 1",
+    `SELECT
+      COALESCE(tenant_id, owner_key) AS tenantId,
+      created_by_user_id AS userId,
+      COALESCE(
+        scopes,
+        'checkpoints:read checkpoints:write checkpoints:share'
+      ) AS scopes
+    FROM api_tokens
+    WHERE token_hash = ?
+      AND revoked_at IS NULL
+      AND (expires_at IS NULL OR expires_at > ?)
+    LIMIT 1`,
   )
-    .bind(tokenHash)
-    .first<{ ownerKey: string }>();
+    .bind(tokenHash, new Date().toISOString())
+    .first<{ tenantId: string; userId: string | null; scopes: string }>();
   if (!record) return null;
   await DB.prepare("UPDATE api_tokens SET last_used_at = ? WHERE token_hash = ?")
     .bind(new Date().toISOString(), tokenHash)
     .run();
-  return record.ownerKey;
+  return {
+    tenantId: record.tenantId,
+    userId: record.userId,
+    scopes: record.scopes.split(/\s+/).filter(Boolean),
+  } satisfies ApiTokenPrincipal;
 }
 
-export async function authenticateApiToken(request: Request) {
+export async function authenticateApiToken(
+  request: Request,
+  requiredScope?: (typeof DEFAULT_TOKEN_SCOPES)[number],
+) {
   const authorization = request.headers.get("authorization") ?? "";
   const match = authorization.match(/^Bearer\s+(.+)$/i);
-  return match ? ownerForApiToken(match[1].trim()) : null;
+  if (!match) return null;
+  const principal = await ownerForApiToken(match[1].trim());
+  if (!principal) return null;
+  if (requiredScope && !principal.scopes.includes(requiredScope)) return null;
+  return principal;
 }
 
 async function hashToken(token: string) {

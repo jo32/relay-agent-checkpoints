@@ -5,6 +5,8 @@ export const checkpoints = sqliteTable(
   {
     id: text("id").primaryKey(),
     ownerKey: text("owner_key").notNull(),
+    tenantId: text("tenant_id"),
+    createdByUserId: text("created_by_user_id"),
     workspaceName: text("workspace_name").notNull(),
     label: text("label").notNull(),
     sourceAgent: text("source_agent").notNull(),
@@ -22,6 +24,7 @@ export const checkpoints = sqliteTable(
   },
   (table) => [
     index("checkpoints_owner_created_idx").on(table.ownerKey, table.createdAt),
+    index("checkpoints_tenant_created_idx").on(table.tenantId, table.createdAt),
   ],
 );
 
@@ -33,9 +36,19 @@ export const apiTokens = sqliteTable(
     tokenHash: text("token_hash").primaryKey(),
     tokenPrefix: text("token_prefix").notNull(),
     ownerKey: text("owner_key").notNull(),
+    tenantId: text("tenant_id"),
+    createdByUserId: text("created_by_user_id"),
     label: text("label").notNull(),
+    scopes: text("scopes")
+      .notNull()
+      .default("checkpoints:read checkpoints:write checkpoints:share"),
     createdAt: text("created_at").notNull(),
     lastUsedAt: text("last_used_at"),
+    expiresAt: text("expires_at"),
+    revokedAt: text("revoked_at"),
   },
-  (table) => [index("api_tokens_owner_idx").on(table.ownerKey)],
+  (table) => [
+    index("api_tokens_owner_idx").on(table.ownerKey),
+    index("api_tokens_tenant_idx").on(table.tenantId),
+  ],
 );

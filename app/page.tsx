@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { getChatGPTUser } from "./chatgpt-auth";
+import { redirect } from "next/navigation";
+import { getCurrentPrincipal } from "../lib/principal";
 import RelayDashboard from "./relay-dashboard";
 
 export const metadata: Metadata = {
@@ -11,12 +12,16 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const user = await getChatGPTUser();
+  const principal = await getCurrentPrincipal();
+  if (!principal) redirect("/sign-in");
+
   return (
     <RelayDashboard
-      displayName={user?.displayName ?? "Jo"}
-      email={user?.email ?? "Local workspace"}
-      isLocalPreview={!user}
+      displayName={principal.displayName}
+      email={principal.email}
+      organizationName={principal.organizationName}
+      authSource={principal.source}
+      isLocalPreview={principal.source === "local"}
     />
   );
 }
