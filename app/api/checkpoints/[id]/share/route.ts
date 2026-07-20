@@ -2,10 +2,6 @@ import {
   authenticateApiToken,
   createShareToken,
 } from "../../../../../db/checkpoints";
-import {
-  getCurrentPrincipal,
-  isSameOriginRequest,
-} from "../../../../../lib/principal";
 
 export const dynamic = "force-dynamic";
 
@@ -15,21 +11,16 @@ export async function POST(
 ) {
   const { id } = await context.params;
   const tokenPrincipal = await authenticateApiToken(request, "checkpoints:share");
-  const browserPrincipal = tokenPrincipal ? null : await getCurrentPrincipal();
-  if (!tokenPrincipal && !browserPrincipal) {
-    return Response.json({ error: "Sign in to share a checkpoint." }, { status: 401 });
-  }
-  if (
-    browserPrincipal &&
-    browserPrincipal.source !== "local" &&
-    !isSameOriginRequest(request)
-  ) {
-    return Response.json({ error: "Invalid request origin." }, { status: 403 });
+  if (!tokenPrincipal) {
+    return Response.json(
+      { error: "Use the local share command with a Relay API token." },
+      { status: 401 },
+    );
   }
 
   const share = await createShareToken(
     id,
-    tokenPrincipal?.tenantId ?? browserPrincipal!.tenantId,
+    tokenPrincipal.tenantId,
   );
 
   if (!share) {
@@ -37,8 +28,11 @@ export async function POST(
   }
 
   const url = new URL(request.url);
-  return Response.json({
-    url: `${url.origin}/api/shared/${share.token}`,
-    expiresAt: share.expiresAt,
-  });
+  return Response.json(
+    {
+      url: `${url.origin}/api/shared/${share.token}`,
+      expiresAt: share.expiresAt,
+    },
+    { headers: { "cache-control": "no-store" } },
+  );
 }

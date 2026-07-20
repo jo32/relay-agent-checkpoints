@@ -19,6 +19,8 @@ export const checkpoints = sqliteTable(
     handoff: text("handoff").notNull().default(""),
     objectKey: text("object_key").notNull(),
     checksum: text("checksum").notNull(),
+    encryptionVersion: integer("encryption_version").notNull().default(1),
+    cipher: text("cipher").notNull().default("none"),
     shareToken: text("share_token"),
     shareExpiresAt: text("share_expires_at"),
   },

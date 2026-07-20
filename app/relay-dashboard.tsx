@@ -46,6 +46,8 @@ type Checkpoint = {
   parentId: string | null;
   handoff: string;
   checksum: string;
+  encryptionVersion: number;
+  cipher: string;
   demo?: boolean;
 };
 
@@ -55,47 +57,53 @@ type LoadStatus = "loading" | "ready" | "error";
 const previewCheckpoints: Checkpoint[] = [
   {
     id: "cp_7d2a1f",
-    workspaceName: "atlas-web",
-    label: "Auth flow ready for handoff",
-    sourceAgent: "Claude Code skill",
+    workspaceName: "Private workspace",
+    label: "Encrypted checkpoint",
+    sourceAgent: "Local checkpoint skill",
     status: "ready",
     createdAt: "2026-07-18T08:30:00.000Z",
     sizeBytes: 18_400_000,
-    fileCount: 284,
-    excludedCount: 14_203,
-    parentId: "cp_4a91ce",
-    handoff: "Review the passkey flow and run the browser tests.",
+    fileCount: 0,
+    excludedCount: 0,
+    parentId: null,
+    handoff: "",
     checksum: "sha256:7b26d3f912e",
+    encryptionVersion: 2,
+    cipher: "AES-256-GCM",
     demo: true,
   },
   {
     id: "cp_4a91ce",
-    workspaceName: "atlas-web",
-    label: "Dashboard filters complete",
-    sourceAgent: "Codex skill",
+    workspaceName: "Private workspace",
+    label: "Encrypted checkpoint",
+    sourceAgent: "Local checkpoint skill",
     status: "ready",
     createdAt: "2026-07-18T05:00:00.000Z",
     sizeBytes: 17_900_000,
-    fileCount: 276,
-    excludedCount: 14_181,
+    fileCount: 0,
+    excludedCount: 0,
     parentId: null,
-    handoff: "Filter state is reflected in the URL.",
+    handoff: "",
     checksum: "sha256:26f07c44d19",
+    encryptionVersion: 2,
+    cipher: "AES-256-GCM",
     demo: true,
   },
   {
     id: "cp_a94f0e",
-    workspaceName: "mobile-kit",
-    label: "Offline sync adapter",
-    sourceAgent: "Codex skill",
+    workspaceName: "Private workspace",
+    label: "Encrypted checkpoint",
+    sourceAgent: "Local checkpoint skill",
     status: "ready",
     createdAt: "2026-07-17T07:00:00.000Z",
     sizeBytes: 9_600_000,
-    fileCount: 193,
-    excludedCount: 4_982,
+    fileCount: 0,
+    excludedCount: 0,
     parentId: null,
-    handoff: "Continue the conflict-resolution tests.",
+    handoff: "",
     checksum: "sha256:18c3ab0f2c7",
+    encryptionVersion: 2,
+    cipher: "AES-256-GCM",
     demo: true,
   },
 ];
@@ -361,7 +369,7 @@ function GlobalHeader({
       </label>
 
       <div className="header-account">
-        <span>Secure workspace registry</span>
+        <span>Zero-knowledge checkpoint registry</span>
         <span className="avatar">{initials(displayName)}</span>
       </div>
     </header>
@@ -464,7 +472,7 @@ function Sidebar({
             <span className="status-dot" />
             <div>
               <strong>{storageOnline ? "Storage connected" : "Storage unavailable"}</strong>
-              <small>{storageOnline ? "D1 metadata · R2 archives" : "Retry from the status banner"}</small>
+              <small>{storageOnline ? "Opaque metadata · encrypted objects" : "Retry from the status banner"}</small>
             </div>
           </div>
           <div className="account-row">
@@ -511,7 +519,6 @@ function CheckpointsView({
 }) {
   const workspaceCount = new Set(allCheckpoints.map((item) => item.workspaceName)).size;
   const totalBytes = allCheckpoints.reduce((sum, item) => sum + item.sizeBytes, 0);
-  const protectedFiles = allCheckpoints.reduce((sum, item) => sum + item.excludedCount, 0);
   const latest = checkpoints[0] ?? allCheckpoints[0] ?? null;
 
   return (
@@ -522,7 +529,7 @@ function CheckpointsView({
         description={
           workspaceFilter
             ? `Immutable history for ${workspaceFilter}.`
-            : "Immutable workspace archives created by skills and ready to restore anywhere."
+            : "End-to-end encrypted workspace archives that Relay cannot inspect or decrypt."
         }
         action={
           <button className="button primary" type="button" onClick={onConnect}>
@@ -536,7 +543,7 @@ function CheckpointsView({
         <Stat label="Checkpoints" value={String(allCheckpoints.length)} icon={Archive} tone="clay" />
         <Stat label="Workspaces" value={String(workspaceCount)} icon={Folder} tone="ochre" />
         <Stat label="Archive storage" value={formatBytes(totalBytes)} icon={HardDrive} tone="ocean" />
-        <Stat label="Files excluded" value={formatNumber(protectedFiles)} icon={ShieldCheck} tone="sage" />
+        <Stat label="Encryption" value="AES-GCM" icon={ShieldCheck} tone="sage" />
       </section>
 
       {latest && (
@@ -554,12 +561,16 @@ function CheckpointsView({
               <div>
                 <span className="badge success">Ready</span>
                 <h2>{latest.label}</h2>
-                <p>{latest.handoff || "No handoff note was provided."}</p>
+                <p>
+                  {latest.encryptionVersion >= 2
+                    ? "Workspace name, handoff, and file manifest are encrypted inside this checkpoint."
+                    : latest.handoff || "Legacy plaintext metadata."}
+                </p>
               </div>
             </div>
             <dl className="latest-meta">
-              <div><dt>Workspace</dt><dd>{latest.workspaceName}</dd></div>
-              <div><dt>Created by</dt><dd>{latest.sourceAgent}</dd></div>
+              <div><dt>Metadata</dt><dd>Encrypted locally</dd></div>
+              <div><dt>Cipher</dt><dd>{latest.cipher}</dd></div>
               <div><dt>Checkpoint</dt><dd className="mono">{latest.id}</dd></div>
               <div><dt>Integrity</dt><dd className="mono">{shortChecksum(latest.checksum)}</dd></div>
             </dl>
@@ -580,7 +591,7 @@ function CheckpointsView({
         <div className="section-title-row">
           <div>
             <h2>Checkpoint registry</h2>
-            <p>Every archive is immutable and addressed by checksum.</p>
+            <p>Relay stores ciphertext, its checksum, and minimum routing metadata.</p>
           </div>
           {workspaceFilter && (
             <button className="filter-pill" type="button" onClick={onClearWorkspace}>
@@ -670,7 +681,7 @@ function CheckpointRow({
         <span className="source-badge"><SquareTerminal size={12} /> {checkpoint.sourceAgent}</span>
       </div>
       <div className="contents-cell">
-        <strong>{formatNumber(checkpoint.fileCount)} files</strong>
+        <strong>{checkpoint.cipher}</strong>
         <span>{formatBytes(checkpoint.sizeBytes)}</span>
       </div>
       <time dateTime={checkpoint.createdAt}>{formatDate(checkpoint.createdAt)}</time>
@@ -731,7 +742,7 @@ function WorkspacesView({
       <PageHeading
         eyebrow="Registry"
         title="Workspaces"
-        description="Each workspace keeps a linear, immutable history of skill-created checkpoints."
+        description="Workspace names stay inside encrypted checkpoints; Relay groups them as private."
       />
 
       <section className="workspace-list">
@@ -788,21 +799,21 @@ function SharedView({
       <PageHeading
         eyebrow="Collaboration"
         title="Shared links"
-        description="Create an expiring link to one immutable checkpoint. Links expire after seven days."
+        description="Create an expiring link whose decryption key stays in the URL fragment."
       />
 
       <section className="security-note">
         <div className="security-icon"><ShieldCheck size={20} /></div>
         <div>
-          <h2>Share the artifact, not your secrets.</h2>
+          <h2>Relay never receives the decryption key.</h2>
           <p>
-            The creation skill removes ignored and sensitive files before upload.
-            The restore skill verifies hashes and rejects unsafe archive paths.
+            The local sharing command appends the key after the URL’s # character.
+            Restore decrypts locally, then verifies every archive path and file hash.
           </p>
         </div>
         <div className="security-facts">
-          <span><Check size={13} /> Expiring URL</span>
-          <span><Check size={13} /> Immutable bytes</span>
+          <span><Check size={13} /> Fragment-held key</span>
+          <span><Check size={13} /> Encrypted bytes</span>
           <span><Check size={13} /> Verified restore</span>
         </div>
       </section>
@@ -828,7 +839,7 @@ function SharedView({
                 <span className="mono">{checkpoint.id}</span>
                 <button className="button secondary" type="button" onClick={() => onShare(checkpoint)}>
                   <Copy size={14} />
-                  Copy link
+                  Copy share command
                 </button>
               </article>
             ))
@@ -986,8 +997,8 @@ function SkillIntegrationModal({ onClose }: { onClose: () => void }) {
           <div className="modal-note">
             <Database size={17} />
             <p>
-              Relay stores archives in R2 and metadata in D1. Creation and restore
-              stay inside the two workspace skills.
+              The skill encrypts locally with AES-256-GCM. Relay stores only
+              ciphertext and opaque routing metadata, never the key or handoff.
             </p>
           </div>
 
@@ -1021,7 +1032,7 @@ function SkillIntegrationModal({ onClose }: { onClose: () => void }) {
                 <span>2</span>
                 <div>
                   <h3>Create and upload</h3>
-                  <p>Sanitize, hash, archive, then upload.</p>
+                  <p>Sanitize, encrypt locally, then upload ciphertext.</p>
                 </div>
                 <UploadCloud size={17} />
               </div>
@@ -1037,7 +1048,7 @@ function SkillIntegrationModal({ onClose }: { onClose: () => void }) {
                 <span>3</span>
                 <div>
                   <h3>Download and restore</h3>
-                  <p>Verify and extract into a new workspace.</p>
+                  <p>Fetch the OS-held key, decrypt, verify, then extract.</p>
                 </div>
                 <ArrowDownToLine size={17} />
               </div>
@@ -1054,7 +1065,7 @@ function SkillIntegrationModal({ onClose }: { onClose: () => void }) {
         </div>
 
         <footer className="modal-footer">
-          <span><ShieldCheck size={14} /> Sanitized · Immutable · Verified</span>
+          <span><ShieldCheck size={14} /> Sanitized · Encrypted · Zero-knowledge</span>
           <button className="button primary" type="button" onClick={onClose}>Done</button>
         </footer>
       </section>
@@ -1100,28 +1111,14 @@ async function shareCheckpoint(
   checkpoint: Checkpoint,
   setToast: (message: string) => void,
 ) {
-  if (checkpoint.demo) {
-    try {
-      await copyText(`Relay preview checkpoint: ${checkpoint.label} (${checkpoint.id})`);
-      setToast("Preview checkpoint details copied.");
-    } catch {
-      setToast("Clipboard access is unavailable.");
-    }
-    return;
-  }
-
   try {
-    const response = await fetch(`/api/checkpoints/${checkpoint.id}/share`, {
-      method: "POST",
-    });
-    const result = (await response.json()) as { error?: string; url?: string };
-    if (!response.ok || !result.url) {
-      throw new Error(result.error || "Share link creation failed.");
-    }
-    await copyText(result.url);
-    setToast("Private seven-day link copied.");
+    await copyText(
+      "python3 .agents/skills/agent-workspace-checkpoint/scripts/create_share.py " +
+        `--checkpoint ${checkpoint.id}`,
+    );
+    setToast("Zero-knowledge share command copied.");
   } catch {
-    setToast("Share link could not be created.");
+    setToast("Clipboard access is unavailable.");
   }
 }
 

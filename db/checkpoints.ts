@@ -18,6 +18,8 @@ export type CheckpointRecord = {
   handoff: string;
   objectKey: string;
   checksum: string;
+  encryptionVersion: number;
+  cipher: string;
   shareToken?: string | null;
   shareExpiresAt?: string | null;
 };
@@ -67,7 +69,9 @@ export async function listCheckpoints(tenantId: string) {
       excluded_count AS excludedCount,
       parent_id AS parentId,
       handoff,
-      checksum
+      checksum,
+      encryption_version AS encryptionVersion,
+      cipher
     FROM checkpoints
     WHERE COALESCE(tenant_id, owner_key) = ?
     ORDER BY created_at DESC
@@ -92,8 +96,8 @@ export async function insertCheckpoint(record: CheckpointRecord) {
       id, owner_key, tenant_id, created_by_user_id,
       workspace_name, label, source_agent, status, created_at,
       size_bytes, file_count, excluded_count, parent_id, handoff, object_key, checksum,
-      share_token, share_expires_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      encryption_version, cipher, share_token, share_expires_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       record.id,
@@ -112,6 +116,8 @@ export async function insertCheckpoint(record: CheckpointRecord) {
       record.handoff,
       record.objectKey,
       record.checksum,
+      record.encryptionVersion,
+      record.cipher,
       record.shareToken ?? null,
       record.shareExpiresAt ?? null,
     )
@@ -138,7 +144,9 @@ export async function findCheckpoint(id: string, tenantId: string) {
       parent_id AS parentId,
       handoff,
       object_key AS objectKey,
-      checksum
+      checksum,
+      encryption_version AS encryptionVersion,
+      cipher
     FROM checkpoints
     WHERE id = ? AND COALESCE(tenant_id, owner_key) = ?
     LIMIT 1`,
@@ -147,17 +155,31 @@ export async function findCheckpoint(id: string, tenantId: string) {
     .first<CheckpointRecord>();
 }
 
+export async function checkpointIdExists(id: string) {
+  const { DB } = getRuntimeEnv();
+  await ensureCheckpointSchema(DB);
+  const record = await DB.prepare(
+    "SELECT 1 AS present FROM checkpoints WHERE id = ? LIMIT 1",
+  )
+    .bind(id)
+    .first<{ present: number }>();
+  return Boolean(record);
+}
+
 export async function createShareToken(id: string, tenantId: string) {
   const { DB } = getRuntimeEnv();
   await ensureCheckpointSchema(DB);
   const token = crypto.randomUUID().replaceAll("-", "");
+  const tokenHash = await hashToken(token);
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
   const result = await DB.prepare(
     `UPDATE checkpoints
     SET share_token = ?, share_expires_at = ?
-    WHERE id = ? AND COALESCE(tenant_id, owner_key) = ?`,
+    WHERE id = ?
+      AND COALESCE(tenant_id, owner_key) = ?
+      AND encryption_version >= 2`,
   )
-    .bind(token, expiresAt, id, tenantId)
+    .bind(tokenHash, expiresAt, id, tenantId)
     .run();
 
   return result.meta.changes > 0 ? { token, expiresAt } : null;
@@ -166,6 +188,7 @@ export async function createShareToken(id: string, tenantId: string) {
 export async function findSharedCheckpoint(token: string) {
   const { DB } = getRuntimeEnv();
   await ensureCheckpointSchema(DB);
+  const tokenHash = await hashToken(token);
   return DB.prepare(
     `SELECT
       id,
@@ -184,13 +207,16 @@ export async function findSharedCheckpoint(token: string) {
       handoff,
       object_key AS objectKey,
       checksum,
+      encryption_version AS encryptionVersion,
+      cipher,
       share_token AS shareToken,
       share_expires_at AS shareExpiresAt
     FROM checkpoints
-    WHERE share_token = ? AND share_expires_at > ?
+    WHERE (share_token = ? OR share_token = ?)
+      AND share_expires_at > ?
     LIMIT 1`,
   )
-    .bind(token, new Date().toISOString())
+    .bind(tokenHash, token, new Date().toISOString())
     .first<CheckpointRecord>();
 }
 

@@ -1,11 +1,11 @@
 ---
 name: agent-workspace-checkpoint
-description: Create, sanitize, inspect, and upload immutable project checkpoints to Relay. Use when pausing unfinished agent work, preserving tracked and untracked workspace state, handing a project to another person or machine, forking work, or publishing a restorable checkpoint without dependencies, caches, credentials, VCS internals, raw agent runtime data, or temporary files.
+description: Create, sanitize, locally encrypt, inspect, and upload immutable project checkpoints to Relay. Use when pausing unfinished agent work, preserving tracked and untracked workspace state, handing a project to another person or machine, forking work, or publishing a restorable zero-knowledge checkpoint without dependencies, caches, credentials, VCS internals, raw agent runtime data, or temporary files.
 ---
 
 # Agent Workspace Checkpoint
 
-Create a safe local archive, verify its contents, then upload it to Relay. Do not restore or execute a checkpoint with this skill; use `$restore-agent-workspace` for that.
+Create a safe archive, encrypt it locally, store its key in the operating-system credential vault, then upload only ciphertext to Relay. Do not restore or execute a checkpoint with this skill; use `$restore-agent-workspace` for that.
 
 ## Configure Relay
 
@@ -33,7 +33,7 @@ python3 scripts/create_checkpoint.py \
 ```
 
 4. Review secret warnings and unusual exclusions. Never weaken mandatory security exclusions merely to include a file.
-5. Create and upload:
+5. Create, encrypt, and upload:
 
 ```bash
 python3 scripts/create_checkpoint.py \
@@ -46,6 +46,10 @@ python3 scripts/create_checkpoint.py \
 ```
 
 Return the Relay checkpoint ID, archive checksum, included and excluded counts, and the local archive path.
+
+The output must be a format-v2 `.relay` file encrypted with AES-256-GCM. On macOS, the random per-checkpoint key is stored in Keychain. On Windows, it is stored in Credential Locker. Relay must never receive the key.
+
+For an explicitly managed recovery file, add `--key-file /secure/path/relay-keys.json`. The key file must be outside the project and mode `600`.
 
 ## File-selection policy
 
@@ -67,7 +71,7 @@ Verify the sidecar checksum, archive structure, member types, manifest, and file
 python3 scripts/inspect_checkpoint.py \
   --verify \
   --show-excluded \
-  /path/to/checkpoint.tar.gz
+  /path/to/checkpoint.relay
 ```
 
 Treat an archive that fails validation as untrusted.
@@ -84,4 +88,12 @@ Each checkpoint contains:
 └── manifest.json
 ```
 
-The manifest records lineage, source agent, Git state, included file hashes, exclusion reasons, inferred stacks, and a deterministic tree hash. The adjacent `.sha256` file identifies the archive itself.
+The manifest records lineage, source agent, Git state, included file hashes, exclusion reasons, inferred stacks, and a deterministic tree hash. The adjacent `.sha256` file identifies the encrypted artifact itself. The manifest, handoff, workspace name, Git state, file list, and exclusions are all inside the ciphertext.
+
+## Create a zero-knowledge share link
+
+```bash
+python3 scripts/create_share.py --checkpoint cp_123
+```
+
+The command reads the key locally and appends it after `#relay-key=` in the share URL. URL fragments are not sent to Relay. Never create or distribute a share URL without its key fragment.

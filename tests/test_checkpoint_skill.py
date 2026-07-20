@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import json
 import subprocess
 import sys
@@ -17,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / ".agents" / "skills" / "agent-workspace-checkpoint" / "scripts"
 CREATE = SCRIPTS / "create_checkpoint.py"
 INSPECT = SCRIPTS / "inspect_checkpoint.py"
+SHARE = SCRIPTS / "create_share.py"
 RESTORE = (
     ROOT
     / ".agents"
@@ -41,6 +43,8 @@ class CheckpointSkillTests(unittest.TestCase):
             base = Path(temporary)
             project = base / "project"
             output = base / "out"
+            key_file = base / "keys.json"
+            restored = base / "restored"
             project.mkdir()
             (project / "package.json").write_text('{"name":"demo"}')
             (project / "src").mkdir()
@@ -59,27 +63,58 @@ class CheckpointSkillTests(unittest.TestCase):
                 str(output),
                 "--source-agent",
                 "codex",
+                "--key-file",
+                str(key_file),
                 "--json",
             )
             payload = json.loads(result.stdout)
             archive = Path(payload["archive"])
-            with tarfile.open(archive, "r:gz") as checkpoint:
-                names = set(checkpoint.getnames())
-                self.assertIn("src/index.js", names)
-                self.assertIn(".agent-checkpoint/manifest.json", names)
-                self.assertNotIn(".env", names)
-                self.assertNotIn("leaked.txt", names)
-                self.assertNotIn("node_modules/pkg/index.js", names)
-                manifest = json.load(checkpoint.extractfile(".agent-checkpoint/manifest.json"))
-                reasons = {item["path"]: item["reason"] for item in manifest["exclusions"]}
-                self.assertEqual(reasons[".env"], "credential or secret file")
-                self.assertEqual(reasons["leaked.txt"], "API key")
+            self.assertEqual(archive.suffix, ".relay")
+            self.assertEqual(archive.read_bytes()[:9], b"RELAYCP2\n")
+            self.assertNotIn(b"console.log('safe')", archive.read_bytes())
+            self.assertNotIn(
+                payload["treeHash"].removeprefix("sha256:")[:12],
+                payload["checkpointId"],
+            )
+            inspected = json.loads(
+                self.run_script(
+                    INSPECT,
+                    "--verify",
+                    "--show-excluded",
+                    "--key-file",
+                    str(key_file),
+                    "--json",
+                    str(archive),
+                ).stdout
+            )
+            reasons = {
+                item["path"]: item["reason"]
+                for item in inspected["exclusions"]
+            }
+            self.assertTrue(inspected["encrypted"])
+            self.assertEqual(reasons[".env"], "credential or secret file")
+            self.assertEqual(reasons["leaked.txt"], "API key")
+            with archive_server(archive) as url:
+                self.run_script(
+                    RESTORE,
+                    "--checkpoint",
+                    url,
+                    "--destination",
+                    str(restored),
+                    "--key-file",
+                    str(key_file),
+                )
+            self.assertTrue((restored / "src" / "index.js").is_file())
+            self.assertFalse((restored / ".env").exists())
+            self.assertFalse((restored / "leaked.txt").exists())
 
     def test_preserves_tracked_temporary_named_file(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
             project = base / "repo"
             output = base / "out"
+            key_file = base / "keys.json"
+            restored = base / "restored"
             project.mkdir()
             subprocess.run(["git", "init", "-q", str(project)], check=True)
             (project / ".gitignore").write_text("*.tmp\n")
@@ -92,10 +127,24 @@ class CheckpointSkillTests(unittest.TestCase):
                 str(project),
                 "--output-dir",
                 str(output),
+                "--key-file",
+                str(key_file),
                 "--json",
             )
-            with tarfile.open(json.loads(result.stdout)["archive"], "r:gz") as checkpoint:
-                self.assertIn("fixture.tmp", checkpoint.getnames())
+            with archive_server(Path(json.loads(result.stdout)["archive"])) as url:
+                self.run_script(
+                    RESTORE,
+                    "--checkpoint",
+                    url,
+                    "--destination",
+                    str(restored),
+                    "--key-file",
+                    str(key_file),
+                )
+            self.assertEqual(
+                (restored / "fixture.tmp").read_text(),
+                "intentional fixture",
+            )
 
     def test_restore_verifies_round_trip(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -103,6 +152,7 @@ class CheckpointSkillTests(unittest.TestCase):
             project = base / "project"
             output = base / "out"
             restored = base / "restored"
+            key_file = base / "keys.json"
             project.mkdir()
             (project / "README.md").write_text("hello checkpoint")
             created = json.loads(
@@ -112,10 +162,19 @@ class CheckpointSkillTests(unittest.TestCase):
                     str(project),
                     "--output-dir",
                     str(output),
+                    "--key-file",
+                    str(key_file),
                     "--json",
                 ).stdout
             )
-            inspected = self.run_script(INSPECT, "--verify", "--json", created["archive"])
+            inspected = self.run_script(
+                INSPECT,
+                "--verify",
+                "--key-file",
+                str(key_file),
+                "--json",
+                created["archive"],
+            )
             self.assertEqual(json.loads(inspected.stdout)["errors"], [])
             with archive_server(Path(created["archive"])) as url:
                 restored_result = self.run_script(
@@ -124,10 +183,98 @@ class CheckpointSkillTests(unittest.TestCase):
                     url,
                     "--destination",
                     str(restored),
+                    "--key-file",
+                    str(key_file),
                     "--json",
                 )
             self.assertEqual(json.loads(restored_result.stdout)["verifiedFiles"], 1)
+            self.assertTrue(json.loads(restored_result.stdout)["encrypted"])
             self.assertEqual((restored / "README.md").read_text(), "hello checkpoint")
+
+    def test_restore_rejects_tampered_ciphertext(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            output = base / "out"
+            key_file = base / "keys.json"
+            project.mkdir()
+            (project / "README.md").write_text("authenticated content")
+            created = json.loads(
+                self.run_script(
+                    CREATE,
+                    "--root",
+                    str(project),
+                    "--output-dir",
+                    str(output),
+                    "--key-file",
+                    str(key_file),
+                    "--json",
+                ).stdout
+            )
+            tampered = base / "tampered.relay"
+            ciphertext = bytearray(Path(created["archive"]).read_bytes())
+            ciphertext[-1] ^= 1
+            tampered.write_bytes(ciphertext)
+            with archive_server(tampered) as url:
+                result = self.run_script(
+                    RESTORE,
+                    "--checkpoint",
+                    url,
+                    "--destination",
+                    str(base / "restored"),
+                    "--key-file",
+                    str(key_file),
+                    check=False,
+                )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("authentication failed", result.stderr.lower())
+            self.assertFalse((base / "restored").exists())
+
+    def test_share_fragment_restores_without_sender_key_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            output = base / "out"
+            sender_keys = base / "sender-keys.json"
+            recipient_keys = base / "recipient-keys.json"
+            restored = base / "restored"
+            project.mkdir()
+            (project / "README.md").write_text("portable encrypted content")
+            created = json.loads(
+                self.run_script(
+                    CREATE,
+                    "--root",
+                    str(project),
+                    "--output-dir",
+                    str(output),
+                    "--key-file",
+                    str(sender_keys),
+                    "--json",
+                ).stdout
+            )
+            checkpoint_id = created["checkpointId"]
+            key = json.loads(sender_keys.read_text())["keys"][checkpoint_id]
+            with archive_server(Path(created["archive"])) as base_url:
+                result = self.run_script(
+                    RESTORE,
+                    "--checkpoint",
+                    f"{base_url}#relay-key={key}",
+                    "--destination",
+                    str(restored),
+                    "--key-file",
+                    str(recipient_keys),
+                    "--json",
+                )
+            restored_result = json.loads(result.stdout)
+            self.assertNotIn("#relay-key", restored_result["downloadUrl"])
+            self.assertEqual(
+                json.loads(recipient_keys.read_text())["keys"][checkpoint_id],
+                key,
+            )
+            self.assertEqual(
+                (restored / "README.md").read_text(),
+                "portable encrypted content",
+            )
 
     def test_restore_rejects_path_traversal(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -155,6 +302,7 @@ class CheckpointSkillTests(unittest.TestCase):
             base = Path(temporary)
             project = base / "project"
             output = base / "out"
+            key_file = base / "keys.json"
             project.mkdir()
             (project / "main.py").write_text("print('relay')")
             token = "rly_" + "a" * 64
@@ -174,6 +322,8 @@ class CheckpointSkillTests(unittest.TestCase):
                     api_url,
                     "--api-token",
                     token,
+                    "--key-file",
+                    str(key_file),
                     "--json",
                 )
             payload = json.loads(result.stdout)
@@ -182,18 +332,69 @@ class CheckpointSkillTests(unittest.TestCase):
             self.assertEqual(len(requests), 1)
             self.assertEqual(requests[0]["authorization"], f"Bearer {token}")
             self.assertIn(b'name="archive"', requests[0]["body"])
-            self.assertIn(b'name="sourceAgent"', requests[0]["body"])
+            self.assertIn(b'name="encryptionVersion"', requests[0]["body"])
+            self.assertIn(b"RELAYCP2\n", requests[0]["body"])
+            self.assertNotIn(b'name="sourceAgent"', requests[0]["body"])
+            self.assertNotIn(b'name="workspaceName"', requests[0]["body"])
+            self.assertNotIn(b'name="handoff"', requests[0]["body"])
+            self.assertNotIn(b"print('relay')", requests[0]["body"])
+
+    def test_create_share_keeps_key_out_of_request(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            key_file = base / "keys.json"
+            project.mkdir()
+            (project / "main.py").write_text("print('share')")
+            created = json.loads(
+                self.run_script(
+                    CREATE,
+                    "--root",
+                    str(project),
+                    "--output-dir",
+                    str(base / "out"),
+                    "--key-file",
+                    str(key_file),
+                    "--json",
+                ).stdout
+            )
+            token = "rly_" + "b" * 64
+            checkpoint_id = created["checkpointId"]
+            key = json.loads(key_file.read_text())["keys"][checkpoint_id]
+            with share_server(token) as (api_url, requests):
+                result = self.run_script(
+                    SHARE,
+                    "--checkpoint",
+                    checkpoint_id,
+                    "--api-url",
+                    api_url,
+                    "--api-token",
+                    token,
+                    "--key-file",
+                    str(key_file),
+                    "--json",
+                )
+            payload = json.loads(result.stdout)
+            self.assertIn(f"#relay-key={key}", payload["url"])
+            self.assertFalse(payload["serverReceivedKey"])
+            self.assertEqual(requests[0]["body"], b"")
+            self.assertNotIn(key, str(requests[0]))
 
 
 @contextmanager
 def archive_server(archive: Path):
     archive_bytes = archive.read_bytes()
-    checksum = __import__("hashlib").sha256(archive_bytes).hexdigest()
+    checksum = hashlib.sha256(archive_bytes).hexdigest()
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             self.send_response(200)
-            self.send_header("Content-Type", "application/gzip")
+            content_type = (
+                "application/vnd.relay.checkpoint"
+                if archive_bytes.startswith(b"RELAYCP2\n")
+                else "application/gzip"
+            )
+            self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(archive_bytes)))
             self.send_header("X-Checkpoint-Sha256", f"sha256:{checksum}")
             self.end_headers()
@@ -211,6 +412,7 @@ def archive_server(archive: Path):
         server.shutdown()
         thread.join()
         server.server_close()
+
 
 @contextmanager
 def upload_server(expected_token: str):
@@ -237,6 +439,55 @@ def upload_server(expected_token: str):
             self.send_response(
                 201
                 if self.headers.get("Authorization") == f"Bearer {expected_token}"
+                else 401
+            )
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response)))
+            self.end_headers()
+            self.wfile.write(response)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}", requests
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+
+@contextmanager
+def share_server(expected_token: str):
+    requests: list[dict[str, object]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length)
+            requests.append(
+                {
+                    "authorization": self.headers.get("Authorization"),
+                    "path": self.path,
+                    "body": body,
+                }
+            )
+            response = json.dumps(
+                {
+                    "url": (
+                        f"http://127.0.0.1:{self.server.server_port}"
+                        "/api/shared/0123456789abcdef0123456789abcdef"
+                    ),
+                    "expiresAt": "2026-07-27T00:00:00.000Z",
+                }
+            ).encode()
+            self.send_response(
+                200
+                if self.headers.get("Authorization")
+                == f"Bearer {expected_token}"
                 else 401
             )
             self.send_header("Content-Type", "application/json")

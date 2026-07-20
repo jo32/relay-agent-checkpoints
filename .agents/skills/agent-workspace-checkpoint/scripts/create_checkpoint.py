@@ -7,7 +7,9 @@ import argparse
 import io
 import json
 import os
+import secrets
 import tarfile
+import tempfile
 import urllib.error
 import urllib.request
 import uuid
@@ -20,6 +22,12 @@ from checkpoint_lib import (
     safe_slug,
     select_files,
     sha256_file,
+)
+from relay_crypto import RelayCryptoError, encrypt_checkpoint
+from relay_keystore import (
+    KeyStoreError,
+    generate_checkpoint_key,
+    store_checkpoint_key,
 )
 
 
@@ -36,6 +44,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--upload", action="store_true")
     parser.add_argument("--api-url", default=os.environ.get("RELAY_API_URL"))
     parser.add_argument("--api-token", default=os.environ.get("RELAY_API_TOKEN"))
+    parser.add_argument(
+        "--key-file",
+        type=Path,
+        help="Explicit mode-600 recovery key file instead of the OS credential vault",
+    )
     parser.add_argument("--json", action="store_true", dest="json_output")
     return parser.parse_args()
 
@@ -54,14 +67,17 @@ def main() -> int:
     included, excluded, context = select_files(root)
     created_at = datetime.now(timezone.utc).isoformat()
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    checkpoint_id = f"cp_{context['treeHash'][:12]}_{timestamp}"
+    checkpoint_id = f"cp_{secrets.token_hex(16)}"
     label = args.label.strip() or "agent-handoff"
     output_dir = (
         args.output_dir.expanduser()
         if args.output_dir
         else Path.home() / ".agent-checkpoints" / safe_slug(root.name)
     )
-    archive_path = output_dir / f"{timestamp}-{safe_slug(label)}.tar.gz"
+    archive_path = output_dir / f"{timestamp}-{safe_slug(label)}.relay"
+    key_file = args.key_file.expanduser().resolve() if args.key_file else None
+    if key_file and (key_file == root or root in key_file.parents):
+        raise SystemExit("Recovery key files must be stored outside the project")
     if args.upload and (not args.api_url or not args.api_token):
         raise SystemExit(
             "Upload requires RELAY_API_URL and RELAY_API_TOKEN "
@@ -133,6 +149,9 @@ def main() -> int:
         "excludedFiles": len(excluded),
         "stacks": context["stacks"],
         "treeHash": f"sha256:{context['treeHash']}",
+        "encrypted": True,
+        "encryptionVersion": 2,
+        "cipher": "AES-256-GCM",
         "dryRun": args.dry_run,
         "uploaded": False,
         "exclusions": [{"path": item.path, "reason": item.reason} for item in excluded],
@@ -140,45 +159,74 @@ def main() -> int:
 
     if not args.dry_run:
         output_dir.mkdir(parents=True, exist_ok=True)
-        with tarfile.open(archive_path, "w:gz", format=tarfile.PAX_FORMAT) as archive:
-            for item in included:
-                info = tarfile.TarInfo(item.path)
-                info.size = item.size
-                info.mode = item.mode
-                info.mtime = 0
-                with item.source.open("rb") as source:
-                    archive.addfile(info, source)
-            add_bytes(archive, ".agent-checkpoint/manifest.json", json_bytes(manifest))
-            add_bytes(archive, ".agent-checkpoint/HANDOFF.md", handoff.encode("utf-8"))
-            add_bytes(
-                archive,
-                ".agent-checkpoint/inferred.gitignore",
-                ("\n".join(context["inferredRules"]) + "\n").encode("utf-8"),
+        checkpoint_key = generate_checkpoint_key()
+        try:
+            with tempfile.TemporaryDirectory(
+                prefix="relay-checkpoint-"
+            ) as temporary:
+                plaintext_path = Path(temporary) / "checkpoint.tar.gz"
+                with tarfile.open(
+                    plaintext_path,
+                    "w:gz",
+                    format=tarfile.PAX_FORMAT,
+                ) as archive:
+                    for item in included:
+                        info = tarfile.TarInfo(item.path)
+                        info.size = item.size
+                        info.mode = item.mode
+                        info.mtime = 0
+                        with item.source.open("rb") as source:
+                            archive.addfile(info, source)
+                    add_bytes(
+                        archive,
+                        ".agent-checkpoint/manifest.json",
+                        json_bytes(manifest),
+                    )
+                    add_bytes(
+                        archive,
+                        ".agent-checkpoint/HANDOFF.md",
+                        handoff.encode("utf-8"),
+                    )
+                    add_bytes(
+                        archive,
+                        ".agent-checkpoint/inferred.gitignore",
+                        (
+                            "\n".join(context["inferredRules"]) + "\n"
+                        ).encode("utf-8"),
+                    )
+                    add_bytes(
+                        archive,
+                        ".agent-checkpoint/README.md",
+                        b"# Agent workspace checkpoint\n\nRead HANDOFF.md before editing. Verify manifest hashes when restoring.\n",
+                    )
+                encrypt_checkpoint(
+                    plaintext_path,
+                    archive_path,
+                    checkpoint_id,
+                    checkpoint_key,
+                )
+            key_store = store_checkpoint_key(
+                checkpoint_id,
+                checkpoint_key,
+                key_file,
             )
-            add_bytes(
-                archive,
-                ".agent-checkpoint/README.md",
-                b"# Agent workspace checkpoint\n\nRead HANDOFF.md before editing. Verify manifest hashes when restoring.\n",
-            )
+        except (RelayCryptoError, KeyStoreError) as error:
+            archive_path.unlink(missing_ok=True)
+            raise SystemExit(str(error)) from error
+
         archive_hash = sha256_file(archive_path)
         sidecar = archive_path.with_name(archive_path.name + ".sha256")
         sidecar.write_text(f"{archive_hash}  {archive_path.name}\n", encoding="utf-8")
         summary["archiveSha256"] = f"sha256:{archive_hash}"
         summary["sidecar"] = str(sidecar)
+        summary["keyStore"] = key_store
         if args.upload:
             upload_result = upload_checkpoint(
                 archive_path=archive_path,
                 api_url=args.api_url,
                 api_token=args.api_token,
                 checkpoint_id=checkpoint_id,
-                workspace_name=root.name,
-                label=label,
-                source_agent=args.source_agent,
-                parent_id=args.parent,
-                handoff=handoff_text.strip(),
                 checksum=summary["archiveSha256"],
-                file_count=len(included),
-                excluded_count=len(excluded),
             )
             summary["uploaded"] = True
             summary["relay"] = upload_result
@@ -192,6 +240,7 @@ def main() -> int:
         if not args.dry_run:
             print(f"Archive: {archive_path}")
             print(f"Checksum: {summary['archiveSha256']}")
+            print(f"Encryption key: {summary['keyStore']}")
             if summary["uploaded"]:
                 print(f"Relay checkpoint: {summary['relay']['checkpoint']['id']}")
         if excluded:
@@ -209,26 +258,14 @@ def upload_checkpoint(
     api_url: str,
     api_token: str,
     checkpoint_id: str,
-    workspace_name: str,
-    label: str,
-    source_agent: str,
-    parent_id: str | None,
-    handoff: str,
     checksum: str,
-    file_count: int,
-    excluded_count: int,
 ) -> dict[str, object]:
     boundary = f"----relay-{uuid.uuid4().hex}"
     fields = {
         "checkpointId": checkpoint_id,
-        "workspaceName": workspace_name,
-        "label": label,
-        "sourceAgent": source_agent,
-        "parentId": parent_id or "",
-        "handoff": handoff,
         "checksum": checksum,
-        "fileCount": str(file_count),
-        "excludedCount": str(excluded_count),
+        "encryptionVersion": "2",
+        "cipher": "AES-256-GCM",
     }
     parts: list[bytes] = []
     for name, value in fields.items():
@@ -245,9 +282,9 @@ def upload_checkpoint(
             f"--{boundary}\r\n".encode(),
             (
                 'Content-Disposition: form-data; name="archive"; '
-                f'filename="{archive_path.name}"\r\n'
+                'filename="checkpoint.relay"\r\n'
             ).encode(),
-            b"Content-Type: application/gzip\r\n\r\n",
+            b"Content-Type: application/vnd.relay.checkpoint\r\n\r\n",
             archive_path.read_bytes(),
             b"\r\n",
             f"--{boundary}--\r\n".encode(),
@@ -263,7 +300,7 @@ def upload_checkpoint(
             "Authorization": f"Bearer {api_token}",
             "Content-Type": f"multipart/form-data; boundary={boundary}",
             "Content-Length": str(len(body)),
-            "User-Agent": "relay-agent-workspace-checkpoint/1",
+            "User-Agent": "relay-agent-workspace-checkpoint/2",
         },
     )
     try:

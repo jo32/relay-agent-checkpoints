@@ -54,7 +54,7 @@ test("server-renders the Relay product shell", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>Relay — Portable agent checkpoints<\/title>/i);
+  assert.match(html, /<title>Relay — Private agent checkpoints<\/title>/i);
   assert.match(html, /Workspace continuity/);
   assert.match(html, /Connect skills/);
   assert.match(html, /Checkpoint registry/);

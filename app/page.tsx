@@ -4,9 +4,9 @@ import { getCurrentPrincipal } from "../lib/principal";
 import RelayDashboard from "./relay-dashboard";
 
 export const metadata: Metadata = {
-  title: { absolute: "Relay — Portable agent checkpoints" },
+  title: { absolute: "Relay — Private agent checkpoints" },
   description:
-    "Store, share, and restore sanitized workspace checkpoints created by agent skills.",
+    "Store, share, and restore end-to-end encrypted workspace checkpoints.",
 };
 
 export const dynamic = "force-dynamic";

@@ -1,26 +1,51 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 
-export const metadata: Metadata = {
-  title: {
-    default: "Relay — Portable agent checkpoints",
-    template: "%s · Relay",
-  },
-  description:
-    "Pause here. Continue anywhere. Relay stores safe, portable workspace checkpoints created and restored by agent skills.",
-  icons: {
-    icon: "/favicon.svg",
-    shortcut: "/favicon.svg",
-  },
-  openGraph: {
-    title: "Relay — Pause here. Continue anywhere.",
+export async function generateMetadata(): Promise<Metadata> {
+  const requestHeaders = await headers();
+  const host =
+    requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host");
+  const forwardedProtocol = requestHeaders.get("x-forwarded-proto");
+  const protocol =
+    forwardedProtocol ?? (host?.startsWith("localhost") ? "http" : "https");
+  const origin = host ? `${protocol}://${host}` : "http://localhost:3000";
+  const socialImage = new URL("/og.png", origin).toString();
+
+  return {
+    title: {
+      default: "Relay — Private agent checkpoints",
+      template: "%s · Relay",
+    },
     description:
-      "Sanitized, immutable workspace checkpoints created and restored by agent skills.",
-    type: "website",
-  },
-};
+      "Pause here. Continue anywhere. Relay stores zero-knowledge encrypted workspace checkpoints.",
+    icons: {
+      icon: "/favicon.svg",
+      shortcut: "/favicon.svg",
+    },
+    openGraph: {
+      title: "Relay — Private agent checkpoints",
+      description: "Encrypted locally. Unreadable to Relay.",
+      type: "website",
+      images: [
+        {
+          url: socialImage,
+          width: 1536,
+          height: 1024,
+          alt: "Relay — Private agent checkpoints",
+        },
+      ],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: "Relay — Private agent checkpoints",
+      description: "Encrypted locally. Unreadable to Relay.",
+      images: [socialImage],
+    },
+  };
+}
 
 export default function RootLayout({
   children,

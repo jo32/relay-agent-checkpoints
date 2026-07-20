@@ -109,6 +109,8 @@ const PRODUCT_SCHEMA = [
     handoff TEXT NOT NULL DEFAULT '',
     object_key TEXT NOT NULL,
     checksum TEXT NOT NULL,
+    encryption_version INTEGER NOT NULL DEFAULT 1,
+    cipher TEXT NOT NULL DEFAULT 'none',
     share_token TEXT,
     share_expires_at TEXT
   )`,
@@ -146,6 +148,18 @@ async function ensureSchema(db: D1Database): Promise<void> {
 
   await ensureColumn(db, "checkpoints", "tenant_id", "TEXT");
   await ensureColumn(db, "checkpoints", "created_by_user_id", "TEXT");
+  await ensureColumn(
+    db,
+    "checkpoints",
+    "encryption_version",
+    "INTEGER NOT NULL DEFAULT 1",
+  );
+  await ensureColumn(
+    db,
+    "checkpoints",
+    "cipher",
+    "TEXT NOT NULL DEFAULT 'none'",
+  );
   await ensureColumn(db, "api_tokens", "tenant_id", "TEXT");
   await ensureColumn(db, "api_tokens", "created_by_user_id", "TEXT");
   await ensureColumn(

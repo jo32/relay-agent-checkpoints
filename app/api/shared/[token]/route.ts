@@ -21,15 +21,20 @@ export async function GET(
     return Response.json({ error: "Checkpoint archive not found." }, { status: 404 });
   }
 
-  const filename = `${checkpoint.workspaceName}-${checkpoint.id}.tar.gz`
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-");
+  const encrypted = checkpoint.encryptionVersion >= 2;
+  const filename = encrypted
+    ? `${checkpoint.id}.relay`
+    : `${checkpoint.id}.tar.gz`;
   return new Response(object.body, {
     headers: {
-      "content-type": "application/gzip",
+      "content-type": encrypted
+        ? "application/vnd.relay.checkpoint"
+        : "application/gzip",
       "content-disposition": `attachment; filename="${filename}"`,
       "content-length": String(object.size),
       "x-checkpoint-sha256": checkpoint.checksum,
+      "x-checkpoint-id": checkpoint.id,
+      "x-checkpoint-encryption": String(checkpoint.encryptionVersion),
       "cache-control": "private, no-store",
     },
   });
