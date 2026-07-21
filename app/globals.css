@@ -1576,21 +1576,6 @@ input:focus-visible {
   font-size: 10px;
 }
 
-.step-heading .button {
-  min-height: 30px;
-  font-size: 11px;
-}
-
-.step-heading a.button {
-  white-space: nowrap;
-}
-
-.step-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
 .step-heading.compact > svg {
   color: var(--faint);
 }
@@ -2020,8 +2005,6 @@ input:focus-visible {
     grid-template-columns: 24px minmax(0, 1fr);
   }
 
-  .step-heading > .button,
-  .step-heading > .step-actions,
   .step-heading > .badge,
   .step-heading.compact > svg {
     grid-column: 2;

@@ -1,30 +1,40 @@
 ---
 name: agent-workspace-checkpoint
-description: Create, sanitize, locally encrypt, inspect, and upload immutable project checkpoints to Relay. Use when pausing unfinished agent work, preserving tracked and untracked workspace state, handing a project to another person or machine, forking work, or publishing a restorable zero-knowledge checkpoint without dependencies, caches, credentials, VCS internals, raw agent runtime data, or temporary files.
+description: Connect or sign a local agent in to Relay through browser approval, then create, sanitize, locally encrypt, inspect, and upload immutable project checkpoints. Use when connecting an agent to Relay, pausing unfinished work, preserving tracked and untracked workspace state, handing a project to another person or machine, forking work, or publishing a restorable zero-knowledge checkpoint without dependencies, caches, credentials, VCS internals, raw agent runtime data, or temporary files.
 ---
 
 # Agent Workspace Checkpoint
 
 Create a safe archive, ask the user for a 256-bit encryption key through a hidden local prompt, encrypt locally, then upload only ciphertext to Relay. The key is never stored by the skill or sent to Relay. Do not restore or execute a checkpoint with this skill; use `$restore-agent-workspace` for that.
 
-## Configure Relay
+## Connect to Relay
 
-Set the Relay URL, then connect the local agent with a one-time browser authorization:
+Perform authentication through this skill. Never ask the user to run an authentication command or copy an API key.
+
+1. Set the Relay URL supplied by the user or installation prompt.
+2. Check the saved local credential:
 
 ```bash
 export RELAY_API_URL="https://your-relay-site"
+python3 scripts/relay_auth.py status --api-url "$RELAY_API_URL"
+```
+
+3. If the credential is missing or expired, start one-time browser authorization yourself:
+
+```bash
 python3 scripts/relay_auth.py login --api-url "$RELAY_API_URL"
 ```
 
-The command stores the resulting revocable Relay access credential outside the project in the user's protected configuration directory. Relay stores only the credential hash. This credential authorizes private checkpoint API access; it is not the archive encryption key.
+Open the returned approval page automatically and wait while the user signs in with ChatGPT and approves the short code. Continue the requested checkpoint operation after approval succeeds. The skill stores the resulting revocable Relay access credential outside the project in the user's protected configuration directory. Relay stores only the credential hash. This credential authorizes private checkpoint API access; it is not the archive encryption key.
 
 Never request a Relay access credential or encryption key in chat. Never place either secret in the archive, project files, logs, URLs, or handoff text. `RELAY_API_TOKEN` and `--api-token` remain supported only for explicit backward-compatible automation.
 
 ## Create and upload
 
-1. Identify the project root.
-2. Summarize the objective, completed work, blockers, validation state, and next steps in a short Markdown handoff.
-3. Preview the file selection:
+1. Connect to Relay as described above if the saved credential is unavailable or expired.
+2. Identify the project root.
+3. Summarize the objective, completed work, blockers, validation state, and next steps in a short Markdown handoff.
+4. Preview the file selection:
 
 ```bash
 python3 scripts/create_checkpoint.py \
@@ -34,8 +44,8 @@ python3 scripts/create_checkpoint.py \
   --dry-run
 ```
 
-4. Review secret warnings and unusual exclusions. Never weaken mandatory security exclusions merely to include a file.
-5. Create, encrypt, and upload:
+5. Review secret warnings and unusual exclusions. Never weaken mandatory security exclusions merely to include a file.
+6. Create, encrypt, and upload:
 
 ```bash
 python3 scripts/create_checkpoint.py \

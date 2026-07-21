@@ -570,7 +570,7 @@ function CheckpointsView({
             <div className="latest-actions">
               <button className="button secondary" type="button" onClick={() => onRestore(latest)}>
                 <ArrowDownToLine size={15} />
-                Restore
+                Restore via skill
               </button>
               <button className="icon-control" type="button" aria-label={`Share ${latest.label}`} onClick={() => onShare(latest)}>
                 <Share2 size={15} />
@@ -679,15 +679,6 @@ function CheckpointRow({
       </div>
       <time dateTime={checkpoint.createdAt}>{formatDate(checkpoint.createdAt)}</time>
       <div className="row-controls">
-        {!checkpoint.demo && (
-          <a
-            className="icon-control"
-            href={`/api/checkpoints/${checkpoint.id}/download`}
-            aria-label={`Download ${checkpoint.label}`}
-          >
-            <ArrowDownToLine size={15} />
-          </a>
-        )}
         <button
           className="icon-control"
           type="button"
@@ -697,7 +688,7 @@ function CheckpointRow({
           <Share2 size={15} />
         </button>
         <button className="button row-button" type="button" onClick={() => onRestore(checkpoint)}>
-          Restore
+          Restore via skill
         </button>
       </div>
     </article>
@@ -933,24 +924,27 @@ function SkillIntegrationModal({ onClose }: { onClose: () => void }) {
     }
   }
 
-  const signInCommand = `export RELAY_API_URL="${origin}"
-python3 .agents/skills/agent-workspace-checkpoint/scripts/relay_auth.py login \\
-  --api-url "$RELAY_API_URL"`;
   const skillBundleUrl = `${origin}/skills/relay-checkpoint-skills.zip`;
   const skillChecksumUrl = `${skillBundleUrl}.sha256`;
-  const installPrompt = `Install Relay's checkpoint skills in this project.
+  const installPrompt = `Set up Relay's checkpoint skills in this project and connect this agent.
 
-1. Use the downloaded relay-checkpoint-skills.zip and relay-checkpoint-skills.zip.sha256 files if I provide them. Otherwise download them from ${skillBundleUrl} and ${skillChecksumUrl}; if the private site requires my browser session, ask me for the downloaded files.
+Relay URL: ${origin}
+
+1. Download ${skillBundleUrl} and ${skillChecksumUrl} yourself. Do not ask me to download either file.
 2. Verify the ZIP against the published SHA-256 checksum before opening it.
 3. Inspect the archive. It must contain only these two skill folders under .agents/skills/:
    - agent-workspace-checkpoint
    - restore-agent-workspace
 4. Install or update only those folders in this project. Preserve unrelated skills, and ask before replacing locally modified Relay skill files.
-5. Read both SKILL.md files and report their installed paths. Do not create, upload, download, decrypt, or restore a checkpoint yet.`;
-  const createCommand =
-    'python3 .agents/skills/agent-workspace-checkpoint/scripts/create_checkpoint.py \\\n  --root "$PWD" \\\n  --label "ready-for-handoff" \\\n  --upload \\\n  --json';
-  const restoreCommand =
-    "python3 .agents/skills/restore-agent-workspace/scripts/download_checkpoint.py \\\n  --checkpoint cp_EXAMPLE \\\n  --destination ../restored-workspace \\\n  --json";
+5. Read both SKILL.md files.
+6. Use $agent-workspace-checkpoint to connect this agent to the Relay URL above. Run the skill's browser authorization yourself, open the approval page, and wait for me to approve the short code.
+7. Confirm that the skill reports a connected credential. Do not ask me to run commands or provide an API key. Do not create, upload, download, decrypt, or restore a checkpoint yet.`;
+  const createPrompt = `Use $agent-workspace-checkpoint to create and upload an encrypted checkpoint of the current project labeled "ready-for-handoff".
+
+If the Relay credential is missing or expired, let the skill start browser approval first. Run all commands yourself. Ask me only for the encryption key through the hidden local prompt, never in chat.`;
+  const restorePrompt = `Use $restore-agent-workspace to download Relay checkpoint cp_EXAMPLE and restore it into a new workspace at ../restored-workspace.
+
+If the Relay credential is missing or expired, let the skill start browser approval first. Run all commands yourself. Ask me only for the encryption key through the hidden local prompt, never in chat.`;
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
@@ -978,9 +972,9 @@ python3 .agents/skills/agent-workspace-checkpoint/scripts/relay_auth.py login \\
           <div className="modal-note">
             <Database size={17} />
             <p>
-              Relay uses a one-time browser approval to issue a revocable agent
-              credential. It authorizes private uploads and downloads, while your
-              separate encryption key stays local and is never sent to Relay.
+              Your agent uses the Relay skills for installation, sign-in, upload,
+              download, and restore. Your only browser step is approving the
+              one-time code. The separate encryption key stays local.
             </p>
           </div>
 
@@ -988,73 +982,49 @@ python3 .agents/skills/agent-workspace-checkpoint/scripts/relay_auth.py login \\
             <div className="step-heading">
               <span>1</span>
               <div>
-                <h3>Install the two skills</h3>
-                <p>Download the audited bundle, then give this prompt to your agent.</p>
+                <h3>Ask your agent to install and connect</h3>
+                <p>The agent downloads and verifies the skills, then starts browser sign-in.</p>
               </div>
-              <div className="step-actions">
-                <a className="button secondary" href="/skills/relay-checkpoint-skills.zip" download>
-                  <ArrowDownToLine size={14} /> Download bundle
-                </a>
-                <a className="button tertiary" href="/skills/relay-checkpoint-skills.zip.sha256" download>
-                  Checksum
-                </a>
-              </div>
+              <ShieldCheck size={17} />
             </div>
             <CodeBlock
-              label="Agent install prompt"
+              label="Agent setup prompt"
               value={installPrompt}
               onCopy={() => void copy(installPrompt, "install")}
               copied={copied === "install"}
             />
           </section>
 
-          <section className="setup-step">
-            <div className="step-heading">
-              <span>2</span>
-              <div>
-                <h3>Sign in the local agent</h3>
-                <p>Run this once. Match the short code in your browser and approve the agent. No API key is copied.</p>
-              </div>
-              <ShieldCheck size={17} />
-            </div>
-            <CodeBlock
-              label="Device sign-in"
-              value={signInCommand}
-              onCopy={() => void copy(signInCommand, "sign-in")}
-              copied={copied === "sign-in"}
-            />
-          </section>
-
           <div className="setup-grid">
             <section className="setup-step">
               <div className="step-heading compact">
-                <span>3</span>
+                <span>2</span>
                 <div>
-                  <h3>Create and upload</h3>
-                  <p>Enter your key, encrypt locally, then upload ciphertext.</p>
+                  <h3>Ask the creation skill</h3>
+                  <p>The skill signs in if needed, prompts for the key, and uploads ciphertext.</p>
                 </div>
                 <UploadCloud size={17} />
               </div>
               <CodeBlock
-                label="Creation skill"
-                value={createCommand}
-                onCopy={() => void copy(createCommand, "create")}
+                label="Creation prompt"
+                value={createPrompt}
+                onCopy={() => void copy(createPrompt, "create")}
                 copied={copied === "create"}
               />
             </section>
             <section className="setup-step">
               <div className="step-heading compact">
-                <span>4</span>
+                <span>3</span>
                 <div>
-                  <h3>Download and restore</h3>
-                  <p>Enter the same key, decrypt, verify, then extract.</p>
+                  <h3>Ask the restore skill</h3>
+                  <p>The skill signs in if needed, downloads, decrypts, verifies, and extracts.</p>
                 </div>
-                <ArrowDownToLine size={17} />
+                <Archive size={17} />
               </div>
               <CodeBlock
-                label="Restore skill"
-                value={restoreCommand}
-                onCopy={() => void copy(restoreCommand, "restore")}
+                label="Restore prompt"
+                value={restorePrompt}
+                onCopy={() => void copy(restorePrompt, "restore")}
                 copied={copied === "restore"}
               />
             </section>
@@ -1064,7 +1034,7 @@ python3 .agents/skills/agent-workspace-checkpoint/scripts/relay_auth.py login \\
         </div>
 
         <footer className="modal-footer">
-          <span><ShieldCheck size={14} /> Browser-approved · User-keyed · Zero-knowledge</span>
+          <span><ShieldCheck size={14} /> Agent-operated · Browser-approved · User-keyed</span>
           <button className="button primary" type="button" onClick={onClose}>Done</button>
         </footer>
       </section>
@@ -1127,7 +1097,7 @@ async function copyRestorePrompt(
 ) {
   try {
     await copyText(
-      `Use $restore-agent-workspace to download Relay checkpoint ${checkpoint.id}, prompt me locally for its encryption key, and extract it into a new workspace.`,
+      `Use $restore-agent-workspace to download Relay checkpoint ${checkpoint.id} and extract it into a new workspace. If the Relay credential is missing or expired, let the skill start browser approval first. Run all commands yourself, and ask me only for the encryption key through the hidden local prompt.`,
     );
     setToast("Restore-skill prompt copied.");
   } catch {

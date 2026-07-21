@@ -50,6 +50,17 @@ class SkillBundleTests(unittest.TestCase):
             for name, contents in expected.items():
                 self.assertEqual(archive.read(name), contents)
 
+    def test_skills_own_authentication_and_download_workflows(self):
+        create_skill = (SKILL_ROOTS[0] / "SKILL.md").read_text(encoding="utf-8")
+        restore_skill = (SKILL_ROOTS[1] / "SKILL.md").read_text(encoding="utf-8")
+
+        self.assertIn("Never ask the user to run an authentication command", create_skill)
+        self.assertIn("relay_auth.py login", create_skill)
+        self.assertIn("Connect to Relay as described above", create_skill)
+        self.assertIn("Never ask the user to run an authentication command", restore_skill)
+        self.assertIn("relay_auth.py login", restore_skill)
+        self.assertIn("Continue the download after approval succeeds", restore_skill)
+
 
 if __name__ == "__main__":
     unittest.main()

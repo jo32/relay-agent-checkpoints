@@ -1,22 +1,31 @@
 ---
 name: restore-agent-workspace
-description: Download, locally decrypt, and safely extract a Relay checkpoint into a new workspace with authenticated encryption, archive-path validation, and file-hash verification. Use when resuming shared agent work on another machine, handing a checkpoint to another person or agent, restoring a checkpoint ID or expiring zero-knowledge share URL, creating an isolated workspace from an immutable snapshot, or verifying a downloaded .relay checkpoint before use.
+description: Connect a local agent to Relay when necessary, then download, locally decrypt, and safely extract a checkpoint into a new workspace with authenticated encryption, archive-path validation, and file-hash verification. Use when signing in before a restore, resuming shared agent work on another machine, restoring a checkpoint ID or expiring zero-knowledge share URL, creating an isolated workspace from an immutable snapshot, or verifying a downloaded .relay checkpoint before use.
 ---
 
 # Restore Agent Workspace
 
 Download one immutable encrypted checkpoint from Relay, ask the user for its key through a hidden local prompt, authenticate and decrypt it, validate it as untrusted input, and extract it into a new or empty workspace. The key is never stored or sent to Relay.
 
-## Configure authenticated access
+## Connect automatically for private downloads
 
-For a private checkpoint ID, set the Relay URL and connect the local agent with a one-time browser authorization:
+Perform authentication through this skill. Never ask the user to run an authentication command or copy an API key.
+
+For a private checkpoint ID, set the Relay URL supplied by the user or installation prompt, then check the saved local credential:
 
 ```bash
 export RELAY_API_URL="https://your-relay-site"
+python3 ../agent-workspace-checkpoint/scripts/relay_auth.py status \
+  --api-url "$RELAY_API_URL"
+```
+
+If the credential is missing or expired, start one-time browser authorization yourself:
+
+```bash
 python3 ../agent-workspace-checkpoint/scripts/relay_auth.py login --api-url "$RELAY_API_URL"
 ```
 
-The command stores the resulting revocable Relay access credential outside the project in the user's protected configuration directory. Relay stores only its hash. This credential authorizes private checkpoint API access; it is not the archive encryption key.
+Open the returned approval page automatically and wait while the user signs in with ChatGPT and approves the short code. Continue the download after approval succeeds. The skill stores the resulting revocable Relay access credential outside the project in the user's protected configuration directory. Relay stores only its hash. This credential authorizes private checkpoint API access; it is not the archive encryption key.
 
 Treat the local credential and every private share URL as secrets. Never place them in project files, logs, URLs, or handoff text. `RELAY_API_TOKEN` and `--api-token` remain supported only for explicit backward-compatible automation. An expiring Relay share URL does not require a credential and never contains the encryption key.
 

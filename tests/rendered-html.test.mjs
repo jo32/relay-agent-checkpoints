@@ -89,19 +89,20 @@ test("uses ChatGPT as the only interactive sign-in provider", async () => {
   assert.doesNotMatch(authSources, /Google|GitHub|signIn\.social/);
 });
 
-test("skill commands are copy-ready", async () => {
+test("agent-operated skill prompts are copy-ready", async () => {
   const source = await readFile(
     new URL("../app/relay-dashboard.tsx", import.meta.url),
     "utf8",
   );
-  assert.doesNotMatch(source, /\\n\+\s+--/);
-  assert.match(source, /\\n\s+--root/);
-  assert.match(source, /\\n\s+--checkpoint/);
-  assert.match(source, /Install Relay's checkpoint skills in this project/);
+  assert.match(source, /Set up Relay's checkpoint skills in this project and connect this agent/);
   assert.match(source, /relay-checkpoint-skills\.zip/);
   assert.match(source, /skillChecksumUrl = `\$\{skillBundleUrl\}\.sha256`/);
-  assert.match(source, /No API key is copied/);
-  assert.match(source, /relay_auth\.py login/);
+  assert.match(source, /Use \$agent-workspace-checkpoint to connect this agent/);
+  assert.match(source, /Use \$agent-workspace-checkpoint to create and upload/);
+  assert.match(source, /Use \$restore-agent-workspace to download Relay checkpoint/);
+  assert.match(source, /Do not ask me to run commands or provide an API key/);
+  assert.doesNotMatch(source, /Download bundle|Device sign-in|Creation skill|Restore skill/);
+  assert.doesNotMatch(source, /href=\{`\/api\/checkpoints\/\$\{checkpoint\.id\}\/download`\}/);
 });
 
 test("serves the downloadable skill bundle with a matching checksum", async () => {
