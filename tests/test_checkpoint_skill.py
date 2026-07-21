@@ -4,6 +4,7 @@ import io
 import base64
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tarfile
@@ -20,6 +21,7 @@ SCRIPTS = ROOT / ".agents" / "skills" / "agent-workspace-checkpoint" / "scripts"
 CREATE = SCRIPTS / "create_checkpoint.py"
 INSPECT = SCRIPTS / "inspect_checkpoint.py"
 SHARE = SCRIPTS / "create_share.py"
+AUTH = SCRIPTS / "relay_auth.py"
 RESTORE = (
     ROOT
     / ".agents"
@@ -39,6 +41,7 @@ class CheckpointSkillTests(unittest.TestCase):
         *args: str,
         check: bool = True,
         input_text: str | None = None,
+        env: dict[str, str] | None = None,
     ):
         return subprocess.run(
             [sys.executable, str(script), *args],
@@ -46,6 +49,7 @@ class CheckpointSkillTests(unittest.TestCase):
             capture_output=True,
             text=True,
             input=input_text,
+            env={**os.environ, **(env or {})},
         )
 
     def test_create_excludes_secrets_and_inferred_dependencies(self):
@@ -415,6 +419,56 @@ class CheckpointSkillTests(unittest.TestCase):
             self.assertEqual(requests[0]["body"], b"")
             self.assertNotIn(CHECKPOINT_KEY, str(requests[0]))
 
+    def test_device_login_stores_credential_and_upload_uses_it(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            project.mkdir()
+            (project / "main.py").write_text("print('device auth')")
+            credential_file = base / "credentials.json"
+            token = "rly_" + "c" * 64
+            environment = {"RELAY_CREDENTIALS_FILE": str(credential_file)}
+
+            with device_upload_server(token) as (api_url, requests):
+                login = self.run_script(
+                    AUTH,
+                    "login",
+                    "--api-url",
+                    api_url,
+                    "--no-browser",
+                    "--json",
+                    env=environment,
+                )
+                login_payload = json.loads(login.stdout)
+                self.assertTrue(login_payload["connected"])
+                self.assertNotIn(token, login.stdout)
+                self.assertEqual(credential_file.stat().st_mode & 0o777, 0o600)
+
+                created = self.run_script(
+                    CREATE,
+                    "--root",
+                    str(project),
+                    "--output-dir",
+                    str(base / "out"),
+                    "--upload",
+                    "--api-url",
+                    api_url,
+                    "--json",
+                    input_text=f"{CHECKPOINT_KEY}\n{CHECKPOINT_KEY}\n",
+                    env=environment,
+                )
+                self.assertTrue(json.loads(created.stdout)["uploaded"])
+
+            self.assertEqual(
+                [request["path"] for request in requests],
+                [
+                    "/api/device/authorize",
+                    "/api/device/token",
+                    "/api/checkpoints",
+                ],
+            )
+            self.assertEqual(requests[-1]["authorization"], f"Bearer {token}")
+
 
 @contextmanager
 def archive_server(archive: Path):
@@ -525,6 +579,81 @@ def share_server(expected_token: str):
                 == f"Bearer {expected_token}"
                 else 401
             )
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response)))
+            self.end_headers()
+            self.wfile.write(response)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}", requests
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+
+@contextmanager
+def device_upload_server(expected_token: str):
+    requests: list[dict[str, object]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length)
+            requests.append(
+                {
+                    "path": self.path,
+                    "authorization": self.headers.get("Authorization"),
+                    "body": body,
+                }
+            )
+            if self.path == "/api/device/authorize":
+                response = {
+                    "device_code": "rdc_" + "d" * 64,
+                    "user_code": "ABCD-EFGH",
+                    "verification_uri_complete": (
+                        f"http://127.0.0.1:{self.server.server_port}"
+                        "/device?code=ABCD-EFGH"
+                    ),
+                    "expires_in": 30,
+                    "interval": 0,
+                }
+                self._json(201, response)
+                return
+            if self.path == "/api/device/token":
+                self._json(
+                    200,
+                    {
+                        "access_token": expected_token,
+                        "token_type": "Bearer",
+                        "expires_at": "2099-01-01T00:00:00.000Z",
+                        "expires_in": 3600,
+                        "scope": "checkpoints:read checkpoints:write checkpoints:share",
+                    },
+                )
+                return
+            if self.path == "/api/checkpoints":
+                marker = b'name="checkpointId"'
+                marker_index = body.index(marker)
+                value_start = body.index(b"\r\n\r\n", marker_index) + 4
+                value_end = body.index(b"\r\n", value_start)
+                checkpoint_id = body[value_start:value_end].decode()
+                self._json(
+                    201 if self.headers.get("Authorization") == f"Bearer {expected_token}" else 401,
+                    {"checkpoint": {"id": checkpoint_id, "status": "ready"}},
+                )
+                return
+            self._json(404, {"error": "not_found"})
+
+        def _json(self, status: int, payload: dict[str, object]):
+            response = json.dumps(payload).encode()
+            self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(response)))
             self.end_headers()

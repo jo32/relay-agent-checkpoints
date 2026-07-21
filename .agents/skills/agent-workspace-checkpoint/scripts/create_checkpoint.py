@@ -28,6 +28,7 @@ from relay_crypto import (
     encrypt_checkpoint,
     prompt_checkpoint_key,
 )
+from relay_credentials import RelayCredentialError, load_access_token
 
 
 def parse_args() -> argparse.Namespace:
@@ -69,11 +70,14 @@ def main() -> int:
         else Path.home() / ".agent-checkpoints" / safe_slug(root.name)
     )
     archive_path = output_dir / f"{timestamp}-{safe_slug(label)}.relay"
-    if args.upload and (not args.api_url or not args.api_token):
-        raise SystemExit(
-            "Upload requires RELAY_API_URL and RELAY_API_TOKEN "
-            "(or --api-url and --api-token)."
-        )
+    upload_token: str | None = None
+    if args.upload:
+        if not args.api_url:
+            raise SystemExit("Upload requires RELAY_API_URL (or --api-url).")
+        try:
+            upload_token = load_access_token(args.api_url, args.api_token)
+        except RelayCredentialError as error:
+            raise SystemExit(str(error)) from error
 
     handoff_text = (
         args.handoff_file.read_text(encoding="utf-8")
@@ -213,7 +217,7 @@ def main() -> int:
             upload_result = upload_checkpoint(
                 archive_path=archive_path,
                 api_url=args.api_url,
-                api_token=args.api_token,
+                api_token=upload_token,
                 checkpoint_id=checkpoint_id,
                 checksum=summary["archiveSha256"],
             )

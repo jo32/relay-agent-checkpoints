@@ -9,14 +9,16 @@ Create a safe archive, ask the user for a 256-bit encryption key through a hidde
 
 ## Configure Relay
 
-Require these environment variables before upload:
+Set the Relay URL, then connect the local agent with a one-time browser authorization:
 
 ```bash
 export RELAY_API_URL="https://your-relay-site"
-export RELAY_API_TOKEN="rly_..."
+python3 scripts/relay_auth.py login --api-url "$RELAY_API_URL"
 ```
 
-Treat `RELAY_API_TOKEN` as a secret. Never place it in the archive, project files, logs, or handoff text.
+The command stores the resulting revocable Relay access credential outside the project in the user's protected configuration directory. Relay stores only the credential hash. This credential authorizes private checkpoint API access; it is not the archive encryption key.
+
+Never request a Relay access credential or encryption key in chat. Never place either secret in the archive, project files, logs, URLs, or handoff text. `RELAY_API_TOKEN` and `--api-token` remain supported only for explicit backward-compatible automation.
 
 ## Create and upload
 

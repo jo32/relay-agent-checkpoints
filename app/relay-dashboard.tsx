@@ -13,9 +13,7 @@ import {
   Folder,
   GitBranch,
   HardDrive,
-  KeyRound,
   Link2,
-  Loader2,
   LogOut,
   Menu,
   RefreshCw,
@@ -910,8 +908,6 @@ function TableLoading() {
 }
 
 function SkillIntegrationModal({ onClose }: { onClose: () => void }) {
-  const [token, setToken] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -932,27 +928,6 @@ function SkillIntegrationModal({ onClose }: { onClose: () => void }) {
     };
   }, [onClose]);
 
-  async function createToken() {
-    setCreating(true);
-    setError(null);
-    try {
-      const response = await fetch("/api/tokens", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ label: "Agent checkpoint skills" }),
-      });
-      const payload = (await response.json()) as { token?: string; error?: string };
-      if (!response.ok || !payload.token) {
-        throw new Error(payload.error || "Token creation failed.");
-      }
-      setToken(payload.token);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Token creation failed.");
-    } finally {
-      setCreating(false);
-    }
-  }
-
   async function copy(value: string, label: string) {
     try {
       await copyText(value);
@@ -963,9 +938,20 @@ function SkillIntegrationModal({ onClose }: { onClose: () => void }) {
     }
   }
 
-  const environment = token
-    ? `export RELAY_API_URL="${origin}"\nexport RELAY_API_TOKEN="${token}"`
-    : `export RELAY_API_URL="${origin}"\nexport RELAY_API_TOKEN="<create-a-token-above>"`;
+  const signInCommand = `export RELAY_API_URL="${origin}"
+python3 .agents/skills/agent-workspace-checkpoint/scripts/relay_auth.py login \\
+  --api-url "$RELAY_API_URL"`;
+  const skillBundleUrl = `${origin}/skills/relay-checkpoint-skills.zip`;
+  const skillChecksumUrl = `${skillBundleUrl}.sha256`;
+  const installPrompt = `Install Relay's checkpoint skills in this project.
+
+1. Use the downloaded relay-checkpoint-skills.zip and relay-checkpoint-skills.zip.sha256 files if I provide them. Otherwise download them from ${skillBundleUrl} and ${skillChecksumUrl}; if the private site requires my browser session, ask me for the downloaded files.
+2. Verify the ZIP against the published SHA-256 checksum before opening it.
+3. Inspect the archive. It must contain only these two skill folders under .agents/skills/:
+   - agent-workspace-checkpoint
+   - restore-agent-workspace
+4. Install or update only those folders in this project. Preserve unrelated skills, and ask before replacing locally modified Relay skill files.
+5. Read both SKILL.md files and report their installed paths. Do not create, upload, download, decrypt, or restore a checkpoint yet.`;
   const createCommand =
     'python3 .agents/skills/agent-workspace-checkpoint/scripts/create_checkpoint.py \\\n  --root "$PWD" \\\n  --label "ready-for-handoff" \\\n  --upload \\\n  --json';
   const restoreCommand =
@@ -984,8 +970,8 @@ function SkillIntegrationModal({ onClose }: { onClose: () => void }) {
           <div>
             <span className="modal-symbol"><SquareTerminal size={18} /></span>
             <div>
-              <p className="eyebrow">Skill API</p>
-              <h2 id="integration-title">Connect checkpoint skills</h2>
+              <p className="eyebrow">Agent setup</p>
+              <h2 id="integration-title">Install and connect skills</h2>
             </div>
           </div>
           <button ref={closeRef} className="icon-control" type="button" onClick={onClose} aria-label="Close">
@@ -997,8 +983,9 @@ function SkillIntegrationModal({ onClose }: { onClose: () => void }) {
           <div className="modal-note">
             <Database size={17} />
             <p>
-              Enter and confirm your 43-character encryption key through the
-              hidden local prompt. Relay and the skills never store it.
+              Relay uses a one-time browser approval to issue a revocable agent
+              credential. It authorizes private uploads and downloads, while your
+              separate encryption key stays local and is never sent to Relay.
             </p>
           </div>
 
@@ -1006,30 +993,47 @@ function SkillIntegrationModal({ onClose }: { onClose: () => void }) {
             <div className="step-heading">
               <span>1</span>
               <div>
-                <h3>Create an API token</h3>
-                <p>The full token is displayed once and stored only as a hash.</p>
+                <h3>Install the two skills</h3>
+                <p>Download the audited bundle, then give this prompt to your agent.</p>
               </div>
-              {!token ? (
-                <button className="button primary" type="button" onClick={() => void createToken()} disabled={creating}>
-                  {creating ? <Loader2 className="spin" size={14} /> : <KeyRound size={14} />}
-                  {creating ? "Creating…" : "Create token"}
-                </button>
-              ) : (
-                <span className="badge success"><Check size={12} /> Token ready</span>
-              )}
+              <div className="step-actions">
+                <a className="button secondary" href="/skills/relay-checkpoint-skills.zip" download>
+                  <ArrowDownToLine size={14} /> Download bundle
+                </a>
+                <a className="button tertiary" href="/skills/relay-checkpoint-skills.zip.sha256" download>
+                  Checksum
+                </a>
+              </div>
             </div>
             <CodeBlock
-              label="Environment"
-              value={environment}
-              onCopy={() => void copy(environment, "environment")}
-              copied={copied === "environment"}
+              label="Agent install prompt"
+              value={installPrompt}
+              onCopy={() => void copy(installPrompt, "install")}
+              copied={copied === "install"}
+            />
+          </section>
+
+          <section className="setup-step">
+            <div className="step-heading">
+              <span>2</span>
+              <div>
+                <h3>Sign in the local agent</h3>
+                <p>Run this once. Match the short code in your browser and approve the agent. No API key is copied.</p>
+              </div>
+              <ShieldCheck size={17} />
+            </div>
+            <CodeBlock
+              label="Device sign-in"
+              value={signInCommand}
+              onCopy={() => void copy(signInCommand, "sign-in")}
+              copied={copied === "sign-in"}
             />
           </section>
 
           <div className="setup-grid">
             <section className="setup-step">
               <div className="step-heading compact">
-                <span>2</span>
+                <span>3</span>
                 <div>
                   <h3>Create and upload</h3>
                   <p>Enter your key, encrypt locally, then upload ciphertext.</p>
@@ -1045,7 +1049,7 @@ function SkillIntegrationModal({ onClose }: { onClose: () => void }) {
             </section>
             <section className="setup-step">
               <div className="step-heading compact">
-                <span>3</span>
+                <span>4</span>
                 <div>
                   <h3>Download and restore</h3>
                   <p>Enter the same key, decrypt, verify, then extract.</p>
@@ -1065,7 +1069,7 @@ function SkillIntegrationModal({ onClose }: { onClose: () => void }) {
         </div>
 
         <footer className="modal-footer">
-          <span><ShieldCheck size={14} /> User-keyed · Never stored · Zero-knowledge</span>
+          <span><ShieldCheck size={14} /> Browser-approved · User-keyed · Zero-knowledge</span>
           <button className="button primary" type="button" onClick={onClose}>Done</button>
         </footer>
       </section>

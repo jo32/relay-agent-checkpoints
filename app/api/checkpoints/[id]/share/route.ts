@@ -13,7 +13,7 @@ export async function POST(
   const tokenPrincipal = await authenticateApiToken(request, "checkpoints:share");
   if (!tokenPrincipal) {
     return Response.json(
-      { error: "Use the local share command with a Relay API token." },
+      { error: "Use the local share command with a Relay agent credential." },
       { status: 401 },
     );
   }

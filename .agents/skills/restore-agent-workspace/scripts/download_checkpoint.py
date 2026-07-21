@@ -22,6 +22,7 @@ from relay_crypto import (
     prompt_checkpoint_key,
     read_encrypted_header,
 )
+from relay_credentials import RelayCredentialError, load_access_token
 
 MAX_MEMBERS = 100_000
 MAX_EXTRACTED_BYTES = 2 * 1024 * 1024 * 1024
@@ -57,18 +58,19 @@ def main() -> int:
         raise SystemExit(f"Destination must be empty: {destination}")
 
     url, needs_token = checkpoint_url(checkpoint_input, args.api_url)
-    if needs_token and not args.api_token:
-        raise SystemExit(
-            "A checkpoint ID requires RELAY_API_TOKEN "
-            "(or --api-token). Share URLs do not."
-        )
+    api_token: str | None = None
+    if needs_token:
+        try:
+            api_token = load_access_token(args.api_url or "", args.api_token)
+        except RelayCredentialError as error:
+            raise SystemExit(str(error)) from error
 
     with tempfile.TemporaryDirectory(prefix="relay-restore-") as temporary:
         downloaded_path = Path(temporary) / "checkpoint.download"
         relay_metadata = download_archive(
             url,
             downloaded_path,
-            args.api_token if needs_token else None,
+            api_token,
         )
         archive_checksum = f"sha256:{sha256_file(downloaded_path)}"
         relay_checksum = relay_metadata.get("checksum")

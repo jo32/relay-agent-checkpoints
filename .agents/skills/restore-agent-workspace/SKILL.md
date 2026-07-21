@@ -9,14 +9,16 @@ Download one immutable encrypted checkpoint from Relay, ask the user for its key
 
 ## Configure authenticated access
 
-For a private checkpoint ID, require:
+For a private checkpoint ID, set the Relay URL and connect the local agent with a one-time browser authorization:
 
 ```bash
 export RELAY_API_URL="https://your-relay-site"
-export RELAY_API_TOKEN="rly_..."
+python3 ../agent-workspace-checkpoint/scripts/relay_auth.py login --api-url "$RELAY_API_URL"
 ```
 
-An expiring Relay share URL does not require a token and never contains the encryption key.
+The command stores the resulting revocable Relay access credential outside the project in the user's protected configuration directory. Relay stores only its hash. This credential authorizes private checkpoint API access; it is not the archive encryption key.
+
+Treat the local credential and every private share URL as secrets. Never place them in project files, logs, URLs, or handoff text. `RELAY_API_TOKEN` and `--api-token` remain supported only for explicit backward-compatible automation. An expiring Relay share URL does not require a credential and never contains the encryption key.
 
 ## Download and restore
 

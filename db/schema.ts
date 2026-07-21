@@ -1,4 +1,10 @@
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import {
+  index,
+  integer,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 
 export const checkpoints = sqliteTable(
   "checkpoints",
@@ -52,5 +58,25 @@ export const apiTokens = sqliteTable(
   (table) => [
     index("api_tokens_owner_idx").on(table.ownerKey),
     index("api_tokens_tenant_idx").on(table.tenantId),
+  ],
+);
+
+export const deviceAuthorizations = sqliteTable(
+  "device_authorizations",
+  {
+    deviceCodeHash: text("device_code_hash").primaryKey(),
+    userCodeHash: text("user_code_hash").notNull(),
+    clientName: text("client_name").notNull(),
+    status: text("status").notNull().default("pending"),
+    tenantId: text("tenant_id"),
+    userId: text("user_id"),
+    createdAt: text("created_at").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    approvedAt: text("approved_at"),
+    consumedAt: text("consumed_at"),
+  },
+  (table) => [
+    uniqueIndex("device_authorizations_user_code_uidx").on(table.userCodeHash),
+    index("device_authorizations_expires_idx").on(table.expiresAt),
   ],
 );

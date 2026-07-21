@@ -300,7 +300,7 @@ export async function authenticateApiToken(
   return principal;
 }
 
-async function hashToken(token: string) {
+export async function hashToken(token: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
   return [...new Uint8Array(digest)]
     .map((byte) => byte.toString(16).padStart(2, "0"))

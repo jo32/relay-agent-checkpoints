@@ -12,9 +12,14 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
-export default async function SignInPage() {
+export default async function SignInPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ return_to?: string }>;
+}) {
+  const returnTo = safeReturnTo((await searchParams).return_to);
   const principal = await getCurrentPrincipal();
-  if (principal) redirect("/");
+  if (principal) redirect(returnTo);
 
   const providers = getAuthProviderStatus();
 
@@ -42,6 +47,7 @@ export default async function SignInPage() {
         <SignInButtons
           googleEnabled={providers.google}
           githubEnabled={providers.github}
+          callbackURL={returnTo}
         />
 
         {!providers.google && !providers.github && (
@@ -57,4 +63,15 @@ export default async function SignInPage() {
       </section>
     </main>
   );
+}
+
+function safeReturnTo(value: string | undefined) {
+  if (!value?.startsWith("/") || value.startsWith("//")) return "/";
+  try {
+    const parsed = new URL(value, "https://relay.local");
+    if (parsed.origin !== "https://relay.local") return "/";
+    return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    return "/";
+  }
 }

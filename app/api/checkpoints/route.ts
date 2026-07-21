@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
   const credential = await authenticateApiToken(request, "checkpoints:write");
   if (!credential) {
     return NextResponse.json(
-      { error: "A valid Relay API token is required." },
+      { error: "A valid Relay agent credential is required." },
       { status: 401 },
     );
   }

@@ -11,6 +11,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from relay_credentials import RelayCredentialError, load_access_token
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -23,11 +25,12 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    if not args.api_url or not args.api_token:
-        raise SystemExit(
-            "Sharing requires RELAY_API_URL and RELAY_API_TOKEN "
-            "(or --api-url and --api-token)."
-        )
+    if not args.api_url:
+        raise SystemExit("Sharing requires RELAY_API_URL (or --api-url).")
+    try:
+        api_token = load_access_token(args.api_url, args.api_token)
+    except RelayCredentialError as error:
+        raise SystemExit(str(error)) from error
     endpoint = (
         f"{args.api_url.rstrip('/')}/api/checkpoints/"
         f"{urllib.parse.quote(args.checkpoint, safe='')}/share"
@@ -37,7 +40,7 @@ def main() -> int:
         data=b"",
         method="POST",
         headers={
-            "Authorization": f"Bearer {args.api_token}",
+            "Authorization": f"Bearer {api_token}",
             "Accept": "application/json",
             "User-Agent": "relay-agent-workspace-share/2",
         },

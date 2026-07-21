@@ -129,6 +129,20 @@ const PRODUCT_SCHEMA = [
     revoked_at TEXT
   )`,
   "CREATE INDEX IF NOT EXISTS api_tokens_owner_idx ON api_tokens(owner_key)",
+  `CREATE TABLE IF NOT EXISTS device_authorizations (
+    device_code_hash TEXT PRIMARY KEY,
+    user_code_hash TEXT NOT NULL,
+    client_name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    tenant_id TEXT,
+    user_id TEXT,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    approved_at TEXT,
+    consumed_at TEXT
+  )`,
+  "CREATE UNIQUE INDEX IF NOT EXISTS device_authorizations_user_code_uidx ON device_authorizations(user_code_hash)",
+  "CREATE INDEX IF NOT EXISTS device_authorizations_expires_idx ON device_authorizations(expires_at)",
 ] as const;
 
 export async function ensureRelaySchema(db: D1Database): Promise<void> {

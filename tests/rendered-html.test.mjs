@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import test, { after, before } from "node:test";
 
 const port = 4178;
@@ -83,4 +84,98 @@ test("skill commands are copy-ready", async () => {
   assert.doesNotMatch(source, /\\n\+\s+--/);
   assert.match(source, /\\n\s+--root/);
   assert.match(source, /\\n\s+--checkpoint/);
+  assert.match(source, /Install Relay's checkpoint skills in this project/);
+  assert.match(source, /relay-checkpoint-skills\.zip/);
+  assert.match(source, /skillChecksumUrl = `\$\{skillBundleUrl\}\.sha256`/);
+  assert.match(source, /No API key is copied/);
+  assert.match(source, /relay_auth\.py login/);
+});
+
+test("serves the downloadable skill bundle with a matching checksum", async () => {
+  const bundleResponse = await fetch(`${origin}/skills/relay-checkpoint-skills.zip`);
+  assert.equal(bundleResponse.status, 200);
+  const bundle = Buffer.from(await bundleResponse.arrayBuffer());
+  assert.equal(bundle.subarray(0, 2).toString(), "PK");
+
+  const checksumResponse = await fetch(
+    `${origin}/skills/relay-checkpoint-skills.zip.sha256`,
+  );
+  assert.equal(checksumResponse.status, 200);
+  const expected = (await checksumResponse.text()).trim().split(/\s+/)[0];
+  const actual = createHash("sha256").update(bundle).digest("hex");
+  assert.equal(actual, expected);
+});
+
+test("device authorization issues and revokes a scoped agent credential", async () => {
+  const authorizationResponse = await fetch(`${origin}/api/device/authorize`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ client_name: "Rendered HTML test agent" }),
+  });
+  assert.equal(authorizationResponse.status, 201);
+  const authorization = await authorizationResponse.json();
+  assert.match(authorization.device_code, /^rdc_[a-f0-9]{64}$/);
+  assert.match(authorization.user_code, /^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+  assert.equal(
+    authorization.verification_uri_complete,
+    `${origin}/device?code=${authorization.user_code}`,
+  );
+
+  const pendingResponse = await fetch(`${origin}/api/device/token`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ device_code: authorization.device_code }),
+  });
+  assert.equal(pendingResponse.status, 400);
+  assert.deepEqual(await pendingResponse.json(), { error: "authorization_pending" });
+
+  const approvalPage = await fetch(authorization.verification_uri_complete);
+  assert.equal(approvalPage.status, 200);
+  const approvalHtml = await approvalPage.text();
+  assert.match(approvalHtml, /Connect a local agent/);
+  assert.match(approvalHtml, /Rendered HTML test agent/);
+  assert.match(approvalHtml, new RegExp(authorization.user_code));
+
+  const approvalResponse = await fetch(`${origin}/api/device/approve`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      origin,
+    },
+    body: JSON.stringify({
+      user_code: authorization.user_code,
+      decision: "approve",
+    }),
+  });
+  assert.equal(approvalResponse.status, 200);
+  assert.deepEqual(await approvalResponse.json(), { status: "approved" });
+
+  const tokenResponse = await fetch(`${origin}/api/device/token`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ device_code: authorization.device_code }),
+  });
+  assert.equal(tokenResponse.status, 200);
+  const token = await tokenResponse.json();
+  assert.match(token.access_token, /^rly_[a-f0-9]{64}$/);
+  assert.equal(token.token_type, "Bearer");
+  assert.match(token.scope, /checkpoints:write/);
+
+  const authorizedUpload = await fetch(`${origin}/api/checkpoints`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token.access_token}` },
+  });
+  assert.equal(authorizedUpload.status, 400);
+
+  const revokeResponse = await fetch(`${origin}/api/device/revoke`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token.access_token}` },
+  });
+  assert.equal(revokeResponse.status, 204);
+
+  const revokedUpload = await fetch(`${origin}/api/checkpoints`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token.access_token}` },
+  });
+  assert.equal(revokedUpload.status, 401);
 });

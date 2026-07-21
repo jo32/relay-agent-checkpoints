@@ -9,9 +9,11 @@ type SocialProvider = "google" | "github";
 export default function SignInButtons({
   googleEnabled,
   githubEnabled,
+  callbackURL,
 }: {
   googleEnabled: boolean;
   githubEnabled: boolean;
+  callbackURL: string;
 }) {
   const [pending, setPending] = useState<SocialProvider | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -21,8 +23,8 @@ export default function SignInButtons({
     setError(null);
     const result = await authClient.signIn.social({
       provider,
-      callbackURL: "/",
-      errorCallbackURL: "/sign-in",
+      callbackURL,
+      errorCallbackURL: `/sign-in?return_to=${encodeURIComponent(callbackURL)}`,
     });
     if (result.error) {
       setError(result.error.message || "Sign-in could not be started.");
@@ -78,7 +80,7 @@ export default function SignInButtons({
 
       <a
         className="auth-provider-button chatgpt"
-        href="/signin-with-chatgpt?return_to=%2F"
+        href={`/signin-with-chatgpt?return_to=${encodeURIComponent(callbackURL)}`}
       >
         <span className="provider-letter chatgpt" aria-hidden="true">
           C
