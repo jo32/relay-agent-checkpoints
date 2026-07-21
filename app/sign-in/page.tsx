@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getAuthProviderStatus } from "../../lib/auth";
 import { getCurrentPrincipal } from "../../lib/principal";
 import SignInButtons from "./sign-in-buttons";
 
@@ -20,8 +19,6 @@ export default async function SignInPage({
   const returnTo = safeReturnTo((await searchParams).return_to);
   const principal = await getCurrentPrincipal();
   if (principal) redirect(returnTo);
-
-  const providers = getAuthProviderStatus();
 
   return (
     <main className="auth-page">
@@ -44,18 +41,7 @@ export default async function SignInPage({
           </p>
         </div>
 
-        <SignInButtons
-          googleEnabled={providers.google}
-          githubEnabled={providers.github}
-          callbackURL={returnTo}
-        />
-
-        {!providers.google && !providers.github && (
-          <p className="auth-configuration-note">
-            Google and GitHub sign-in will appear after their OAuth credentials
-            are configured.
-          </p>
-        )}
+        <SignInButtons callbackURL={returnTo} />
 
         <p className="auth-legal">
           Share links never contain your encryption key.

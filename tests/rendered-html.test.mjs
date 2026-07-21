@@ -14,9 +14,6 @@ before(async () => {
     cwd: new URL("../", import.meta.url),
     env: {
       ...process.env,
-      BETTER_AUTH_SECRET:
-        "relay-rendered-html-test-secret-is-at-least-32-characters",
-      BETTER_AUTH_URL: origin,
       NO_COLOR: "1",
       RELAY_LOCAL_PREVIEW: "true",
     },
@@ -74,6 +71,22 @@ test("includes accessible product landmarks", async () => {
   assert.match(html, /<nav[^>]*aria-label="Primary"/);
   assert.match(html, /aria-label="Workspace overview"/);
   assert.match(html, /aria-label="Search checkpoints"/);
+});
+
+test("uses ChatGPT as the only interactive sign-in provider", async () => {
+  const pageSource = await readFile(
+    new URL("../app/sign-in/page.tsx", import.meta.url),
+    "utf8",
+  );
+  const buttonSource = await readFile(
+    new URL("../app/sign-in/sign-in-buttons.tsx", import.meta.url),
+    "utf8",
+  );
+  const authSources = `${pageSource}\n${buttonSource}`;
+
+  assert.match(authSources, /Continue with ChatGPT/);
+  assert.match(authSources, /\/signin-with-chatgpt\?return_to=/);
+  assert.doesNotMatch(authSources, /Google|GitHub|signIn\.social/);
 });
 
 test("skill commands are copy-ready", async () => {

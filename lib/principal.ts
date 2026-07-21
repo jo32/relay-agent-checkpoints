@@ -1,18 +1,16 @@
-import { headers } from "next/headers";
 import { getChatGPTUser } from "../app/chatgpt-auth";
 import {
-  getAuth,
-  getRelayAuthEnv,
+  getRelayRuntimeEnv,
   isLocalPreviewEnabled,
-  prepareAuthStorage,
-} from "./auth";
+  prepareRelayStorage,
+} from "./runtime";
 import {
   claimLegacyOwnership,
   ensureChatGPTIdentity,
   ensurePersonalOrganization,
 } from "../db/identity";
 
-export type AuthSource = "better-auth" | "chatgpt" | "local";
+export type AuthSource = "chatgpt" | "local";
 
 export type RelayPrincipal = {
   userId: string;
@@ -25,36 +23,9 @@ export type RelayPrincipal = {
 };
 
 export async function getCurrentPrincipal(): Promise<RelayPrincipal | null> {
-  await prepareAuthStorage();
-  const runtime = getRelayAuthEnv();
+  await prepareRelayStorage();
+  const runtime = getRelayRuntimeEnv();
   const db = runtime.DB!;
-  const requestHeaders = await headers();
-
-  const session = await getAuth().api.getSession({
-    headers: requestHeaders,
-  });
-  if (session?.user) {
-    const organization = await ensurePersonalOrganization(
-      db,
-      session.user.id,
-      session.user.name,
-    );
-    await claimLegacyOwnership(
-      db,
-      session.user.email,
-      organization.organizationId,
-      session.user.id,
-    );
-    return {
-      userId: session.user.id,
-      tenantId: organization.organizationId,
-      organizationName: organization.organizationName,
-      role: organization.role,
-      displayName: session.user.name,
-      email: session.user.email,
-      source: "better-auth",
-    };
-  }
 
   const chatGPTUser = await getChatGPTUser();
   if (chatGPTUser) {

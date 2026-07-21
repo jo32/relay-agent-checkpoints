@@ -563,7 +563,6 @@ input:focus-visible {
 }
 
 .auth-heading p,
-.auth-configuration-note,
 .auth-legal,
 .auth-error {
   margin: 0;
@@ -629,42 +628,12 @@ input:focus-visible {
   border-radius: 50%;
 }
 
-.auth-spinner {
-  animation: auth-spin 0.8s linear infinite;
-}
-
-.auth-divider {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: 10px;
-  color: var(--faint);
-}
-
-.auth-divider span {
-  height: 1px;
-  background: var(--border);
-}
-
-.auth-divider small {
-  font-size: 11px;
-}
-
 .auth-error {
   padding: 10px 12px;
   color: var(--red);
   font-size: 12px;
   background: var(--red-bg);
   border: 1px solid #edc9bd;
-  border-radius: 8px;
-}
-
-.auth-configuration-note {
-  padding: 11px 12px;
-  color: var(--ochre);
-  font-size: 12px;
-  background: var(--ochre-bg);
-  border: 1px solid #ead9ae;
   border-radius: 8px;
 }
 
@@ -773,12 +742,6 @@ input:focus-visible {
   background: white;
   border: 1px solid var(--border-strong);
   border-radius: 8px;
-}
-
-@keyframes auth-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 .nav-backdrop {
