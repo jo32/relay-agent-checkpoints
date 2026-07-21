@@ -5,7 +5,7 @@ description: Connect a local agent to Relay when necessary, then download, local
 
 # Restore Agent Workspace
 
-Download one immutable encrypted checkpoint from Relay, ask the user for its key through a hidden local prompt, authenticate and decrypt it, validate it as untrusted input, and extract it into a new or empty workspace. The key is never stored or sent to Relay.
+Download one immutable encrypted checkpoint from Relay, use its protected locally saved recovery key when available or ask for one privately, derive the 256-bit cipher key locally when required, authenticate and decrypt it, validate it as untrusted input, and extract it into a new or empty workspace. Recovery keys are never sent to Relay.
 
 ## Connect automatically for private downloads
 
@@ -19,13 +19,15 @@ python3 ../agent-workspace-checkpoint/scripts/relay_auth.py status \
   --api-url "$RELAY_API_URL"
 ```
 
+This verifies the credential through Relay's authenticated agent API. Do not open the Relay dashboard after authorization; use the API result instead.
+
 If the credential is missing or expired, start one-time browser authorization yourself:
 
 ```bash
 python3 ../agent-workspace-checkpoint/scripts/relay_auth.py login --api-url "$RELAY_API_URL"
 ```
 
-Open the returned approval page automatically and wait while the user signs in with ChatGPT and approves the short code. Continue the download after approval succeeds. The skill stores the resulting revocable Relay access credential outside the project in the user's protected configuration directory. Relay stores only its hash. This credential authorizes private checkpoint API access; it is not the archive encryption key.
+This command opens only the one-time approval page automatically. Do not also open the printed URL with a browser tool or another command. Wait while the user signs in with ChatGPT and approves the short code. If automatic browser launch clearly fails and you need to open the page yourself, stop the login and restart it with `--no-browser`, then open the printed URL exactly once. After approval, use the agent API result; do not open the dashboard or another site. Continue the download after API verification succeeds. The skill stores the resulting revocable Relay access credential outside the project in the user's protected configuration directory. Relay stores only its hash. This credential authorizes private checkpoint API access; it is not the archive encryption key.
 
 Treat the local credential and every private share URL as secrets. Never place them in project files, logs, URLs, or handoff text. `RELAY_API_TOKEN` and `--api-token` remain supported only for explicit backward-compatible automation. An expiring Relay share URL does not require a credential and never contains the encryption key.
 
@@ -40,6 +42,8 @@ python3 scripts/download_checkpoint.py \
   --json
 ```
 
+The restore command automatically uses a generated key saved locally for that checkpoint ID. No terminal prompt is needed when the saved key exists.
+
 Restore an expiring share URL:
 
 ```bash
@@ -53,7 +57,7 @@ Paste the share URL at the first hidden prompt. This keeps the private share tok
 
 Always restore into a new or empty destination. Never merge an archive directly into a live workspace.
 
-For every encrypted checkpoint, enter its 43-character base64url key at the second hidden prompt. Never request the key in chat or place it in command arguments, environment variables, files, logs, or URLs. The restore skill does not remember, recover, or synchronize it.
+For a separately received generated key, save it as a permission-restricted file and pass `--key-file /path/to/cp_123.key`. If no safe key file is available, the command falls back to the hidden local prompt. A current user-chosen key may be any value of at least 8 characters; spaces and Unicode characters are supported. Older format-v2 checkpoints still require their original 43-character base64url key. Never request a key in chat or place it directly in command arguments, environment variables, logs, or URLs. The restore skill does not remember, recover, or synchronize user-entered keys.
 
 ## Mandatory validation
 

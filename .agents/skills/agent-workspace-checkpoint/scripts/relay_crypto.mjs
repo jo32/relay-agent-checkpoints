@@ -4,6 +4,7 @@ import {
   createCipheriv,
   createDecipheriv,
   randomBytes,
+  scrypt,
 } from "node:crypto";
 import {
   appendFile,
@@ -13,33 +14,79 @@ import {
 } from "node:fs/promises";
 import { createReadStream, createWriteStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
+import { promisify } from "node:util";
 
 const MAGIC = Buffer.from("RELAYCP2\n", "ascii");
 const TAG_BYTES = 16;
 const NONCE_BYTES = 12;
 const MAX_HEADER_BYTES = 16 * 1024;
+const KEY_BYTES = 32;
+const KDF_NAME = "scrypt";
+const KDF_SALT_BYTES = 16;
+const KDF_N = 131_072;
+const KDF_R = 8;
+const KDF_P = 1;
+const KDF_MAX_MEMORY = 256 * 1024 * 1024;
+const scryptAsync = promisify(scrypt);
 
 function fail(message) {
   process.stderr.write(`${message}\n`);
   process.exitCode = 1;
 }
 
-async function readKey() {
+async function readSecret() {
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
   const encoded = Buffer.concat(chunks).toString("utf8").trim();
+  if (!/^[A-Za-z0-9_-]+$/.test(encoded)) {
+    throw new Error("Checkpoint encryption key transport is invalid.");
+  }
+  const secret = Buffer.from(encoded, "base64url");
+  if (secret.length === 0 || secret.toString("base64url") !== encoded) {
+    throw new Error("Checkpoint encryption key transport is invalid.");
+  }
+  return secret;
+}
+
+async function deriveScryptKey(secret, salt) {
+  return Buffer.from(
+    await scryptAsync(secret, salt, KEY_BYTES, {
+      N: KDF_N,
+      r: KDF_R,
+      p: KDF_P,
+      maxmem: KDF_MAX_MEMORY,
+    }),
+  );
+}
+
+function decodeLegacyKey(secret) {
+  const encoded = secret.toString("utf8");
+  if (!/^[A-Za-z0-9_-]{43}$/.test(encoded)) {
+    throw new Error(
+      "This older checkpoint requires its original 43-character base64url key.",
+    );
+  }
   const key = Buffer.from(encoded, "base64url");
-  if (key.length !== 32) throw new Error("Checkpoint encryption key must be 32 bytes.");
+  if (key.length !== KEY_BYTES) {
+    throw new Error("Checkpoint encryption key is invalid.");
+  }
   return key;
 }
 
-function makeHeader(checkpointId, nonce) {
+function makeHeader(checkpointId, nonce, salt) {
   const header = Buffer.from(
     JSON.stringify({
       formatVersion: 2,
       cipher: "AES-256-GCM",
       checkpointId,
       nonce: nonce.toString("base64url"),
+      kdf: {
+        name: KDF_NAME,
+        salt: salt.toString("base64url"),
+        N: KDF_N,
+        r: KDF_R,
+        p: KDF_P,
+      },
     }),
     "utf8",
   );
@@ -90,10 +137,34 @@ async function parseHeader(input) {
     if (nonce.length !== NONCE_BYTES) {
       throw new Error("Encrypted checkpoint nonce is invalid.");
     }
+    let kdf = null;
+    if (header.kdf !== undefined) {
+      const candidate = header.kdf;
+      if (
+        !candidate ||
+        typeof candidate !== "object" ||
+        Array.isArray(candidate) ||
+        Object.keys(candidate).sort().join(",") !== "N,name,p,r,salt" ||
+        candidate.name !== KDF_NAME ||
+        typeof candidate.salt !== "string" ||
+        !/^[A-Za-z0-9_-]{22}$/.test(candidate.salt) ||
+        candidate.N !== KDF_N ||
+        candidate.r !== KDF_R ||
+        candidate.p !== KDF_P
+      ) {
+        throw new Error("Encrypted checkpoint key derivation is unsupported.");
+      }
+      const salt = Buffer.from(candidate.salt, "base64url");
+      if (salt.length !== KDF_SALT_BYTES) {
+        throw new Error("Encrypted checkpoint key derivation salt is invalid.");
+      }
+      kdf = { salt };
+    }
     return {
       header,
       headerBytes,
       nonce,
+      kdf,
       bodyStart: MAGIC.length + 4 + headerLength,
     };
   } finally {
@@ -105,9 +176,11 @@ async function encrypt(input, output, checkpointId) {
   if (!/^cp_[a-z0-9_-]{6,80}$/i.test(checkpointId)) {
     throw new Error("Checkpoint ID is invalid.");
   }
-  const key = await readKey();
+  const secret = await readSecret();
+  const salt = randomBytes(KDF_SALT_BYTES);
+  const key = await deriveScryptKey(secret, salt);
   const nonce = randomBytes(NONCE_BYTES);
-  const header = makeHeader(checkpointId, nonce);
+  const header = makeHeader(checkpointId, nonce, salt);
   const cipher = createCipheriv("aes-256-gcm", key, nonce, { authTagLength: TAG_BYTES });
   cipher.setAAD(header);
 
@@ -132,8 +205,11 @@ async function encrypt(input, output, checkpointId) {
 }
 
 async function decrypt(input, output) {
-  const key = await readKey();
   const parsed = await parseHeader(input);
+  const secret = await readSecret();
+  const key = parsed.kdf
+    ? await deriveScryptKey(secret, parsed.kdf.salt)
+    : decodeLegacyKey(secret);
   const inputStat = await stat(input);
   const bodyEnd = inputStat.size - TAG_BYTES - 1;
   if (bodyEnd < parsed.bodyStart) throw new Error("Encrypted checkpoint has no ciphertext.");

@@ -57,8 +57,8 @@ test("server-renders the Relay product shell", async () => {
   assert.match(html, /Connect skills/);
   assert.match(html, /Checkpoint registry/);
   assert.match(html, /Latest checkpoint/);
-  assert.match(html, /User-keyed checkpoint registry/);
-  assert.match(html, /key you enter locally and Relay never stores/);
+  assert.match(html, /Locally keyed checkpoint registry/);
+  assert.match(html, /key generated or entered locally and never sent to Relay/);
   assert.doesNotMatch(html, /Agent runners|Use runner|Start a handoff/);
   assert.doesNotMatch(html, /Keychain|Credential Locker|OS-held key|URL fragment/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
@@ -175,11 +175,102 @@ test("device authorization issues and revokes a scoped agent credential", async 
   assert.equal(token.token_type, "Bearer");
   assert.match(token.scope, /checkpoints:write/);
 
-  const authorizedUpload = await fetch(`${origin}/api/checkpoints`, {
-    method: "POST",
+  const statusResponse = await fetch(`${origin}/api/agent/status`, {
     headers: { authorization: `Bearer ${token.access_token}` },
   });
-  assert.equal(authorizedUpload.status, 400);
+  assert.equal(statusResponse.status, 200);
+  const status = await statusResponse.json();
+  assert.equal(status.connected, true);
+  assert.match(status.scopes.join(" "), /checkpoints:write/);
+
+  const checkpointId = `cp_rendered_${Date.now()}`;
+  const encryptedHeader = Buffer.from(JSON.stringify({
+    formatVersion: 2,
+    cipher: "AES-256-GCM",
+    checkpointId,
+    nonce: "A".repeat(16),
+  }));
+  const headerLength = Buffer.alloc(4);
+  headerLength.writeUInt32BE(encryptedHeader.length);
+  const encryptedArchive = Buffer.concat([
+    Buffer.from("RELAYCP2\n"),
+    headerLength,
+    encryptedHeader,
+    Buffer.alloc(2 * 1024 * 1024 + 123, 0x5a),
+  ]);
+  const archiveChecksum = `sha256:${createHash("sha256")
+    .update(encryptedArchive)
+    .digest("hex")}`;
+  const initializeResponse = await fetch(`${origin}/api/checkpoints/uploads`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token.access_token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      checkpointId,
+      checksum: archiveChecksum,
+      encryptionVersion: 2,
+      cipher: "AES-256-GCM",
+      sizeBytes: encryptedArchive.length,
+    }),
+  });
+  assert.equal(initializeResponse.status, 201);
+  const initialized = await initializeResponse.json();
+  assert.equal(initialized.chunkSize, 1024 * 1024);
+  assert.equal(initialized.partCount, 3);
+
+  for (let partNumber = 1; partNumber <= initialized.partCount; partNumber += 1) {
+    const start = (partNumber - 1) * initialized.chunkSize;
+    const part = encryptedArchive.subarray(
+      start,
+      Math.min(start + initialized.chunkSize, encryptedArchive.length),
+    );
+    const partChecksum = `sha256:${createHash("sha256").update(part).digest("hex")}`;
+    const partResponse = await fetch(
+      `${origin}/api/checkpoints/uploads/${initialized.uploadId}/parts/${partNumber}`,
+      {
+        method: "PUT",
+        headers: {
+          authorization: `Bearer ${token.access_token}`,
+          "content-type": "application/octet-stream",
+          "x-chunk-sha256": partChecksum,
+        },
+        body: part,
+      },
+    );
+    assert.equal(partResponse.status, 200);
+    assert.equal((await partResponse.json()).checksum, partChecksum);
+  }
+
+  const completeResponse = await fetch(
+    `${origin}/api/checkpoints/uploads/${initialized.uploadId}/complete`,
+    {
+      method: "POST",
+      headers: { authorization: `Bearer ${token.access_token}` },
+    },
+  );
+  assert.equal(completeResponse.status, 201);
+  const completed = await completeResponse.json();
+  assert.equal(completed.checkpoint.id, checkpointId);
+  assert.equal(completed.checkpoint.checksum, archiveChecksum);
+
+  const metadataResponse = await fetch(`${origin}/api/checkpoints/${checkpointId}`, {
+    headers: { authorization: `Bearer ${token.access_token}` },
+  });
+  assert.equal(metadataResponse.status, 200);
+  const metadata = await metadataResponse.json();
+  assert.equal(metadata.checkpoint.sizeBytes, encryptedArchive.length);
+  assert.equal(metadata.checkpoint.checksum, archiveChecksum);
+
+  const downloadResponse = await fetch(
+    `${origin}/api/checkpoints/${checkpointId}/download`,
+    { headers: { authorization: `Bearer ${token.access_token}` } },
+  );
+  assert.equal(downloadResponse.status, 200);
+  const downloaded = Buffer.from(await downloadResponse.arrayBuffer());
+  assert.deepEqual(downloaded, encryptedArchive);
+  assert.equal(downloadResponse.headers.get("x-checkpoint-sha256"), archiveChecksum);
 
   const revokeResponse = await fetch(`${origin}/api/device/revoke`, {
     method: "POST",
@@ -187,9 +278,8 @@ test("device authorization issues and revokes a scoped agent credential", async 
   });
   assert.equal(revokeResponse.status, 204);
 
-  const revokedUpload = await fetch(`${origin}/api/checkpoints`, {
-    method: "POST",
+  const revokedStatus = await fetch(`${origin}/api/agent/status`, {
     headers: { authorization: `Bearer ${token.access_token}` },
   });
-  assert.equal(revokedUpload.status, 401);
+  assert.equal(revokedStatus.status, 401);
 });

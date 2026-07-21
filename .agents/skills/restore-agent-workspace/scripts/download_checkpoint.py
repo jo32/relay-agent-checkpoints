@@ -17,8 +17,10 @@ from pathlib import Path, PurePosixPath
 
 from relay_crypto import (
     RelayCryptoError,
+    checkpoint_key_path,
     decrypt_checkpoint,
     is_encrypted_checkpoint,
+    load_checkpoint_key,
     prompt_checkpoint_key,
     read_encrypted_header,
 )
@@ -38,6 +40,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--destination", type=Path, required=True)
     parser.add_argument("--api-url", default=os.environ.get("RELAY_API_URL"))
     parser.add_argument("--api-token", default=os.environ.get("RELAY_API_TOKEN"))
+    parser.add_argument(
+        "--key-file",
+        type=Path,
+        help="Permission-restricted recovery key file; otherwise use the saved key or prompt",
+    )
     parser.add_argument("--keep-archive", type=Path)
     parser.add_argument("--json", action="store_true", dest="json_output")
     return parser.parse_args()
@@ -85,6 +92,7 @@ def main() -> int:
         encrypted = is_encrypted_checkpoint(downloaded_path)
         checkpoint_id: str | None = None
         archive_path = downloaded_path
+        used_key_file: Path | None = None
         if encrypted:
             try:
                 header = read_encrypted_header(downloaded_path)
@@ -101,7 +109,16 @@ def main() -> int:
                     raise RelayCryptoError(
                         "Encrypted checkpoint ID does not match Relay metadata"
                     )
-                key = prompt_checkpoint_key()
+                candidate = (
+                    args.key_file.expanduser()
+                    if args.key_file
+                    else checkpoint_key_path(checkpoint_id)
+                )
+                if args.key_file or candidate.exists():
+                    key = load_checkpoint_key(candidate)
+                    used_key_file = candidate.resolve()
+                else:
+                    key = prompt_checkpoint_key()
                 archive_path = Path(temporary) / "checkpoint.tar.gz"
                 decrypt_checkpoint(
                     downloaded_path,
@@ -120,7 +137,8 @@ def main() -> int:
                 "encrypted": encrypted,
                 "encryptionVersion": 2 if encrypted else 1,
                 "cipher": "AES-256-GCM" if encrypted else "none",
-                "keyStored": False,
+                "keyStored": used_key_file is not None,
+                "keyFile": str(used_key_file) if used_key_file else None,
             }
         )
         if args.keep_archive:
@@ -137,7 +155,10 @@ def main() -> int:
             f"to {result['destination']}"
         )
         if result["encrypted"]:
-            print("Encryption key: entered interactively and not stored.")
+            if result["keyStored"]:
+                print(f"Recovery key: loaded from {result['keyFile']}")
+            else:
+                print("Encryption key: entered interactively and not stored.")
         print(f"Read the handoff: {result['handoff']}")
     return 0
 

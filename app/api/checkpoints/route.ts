@@ -7,21 +7,28 @@ import {
   insertCheckpoint,
   listCheckpoints,
 } from "../../../db/checkpoints";
+import { MAX_ARCHIVE_BYTES } from "../../../lib/checkpoint-objects";
+import {
+  hasValidEncryptedHeader,
+  MAX_ENCRYPTED_HEADER_BYTES,
+} from "../../../lib/encrypted-checkpoint";
 
 export const dynamic = "force-dynamic";
 
-const MAX_ARCHIVE_BYTES = 100 * 1024 * 1024;
 const ENCRYPTION_VERSION = 2;
 const CHECKPOINT_CIPHER = "AES-256-GCM";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const principal = await getCurrentPrincipal();
-    if (!principal) {
+    const tokenPrincipal = await authenticateApiToken(request, "checkpoints:read");
+    const browserPrincipal = tokenPrincipal ? null : await getCurrentPrincipal();
+    if (!tokenPrincipal && !browserPrincipal) {
       return NextResponse.json({ error: "Sign in to view checkpoints." }, { status: 401 });
     }
     return NextResponse.json({
-      checkpoints: await listCheckpoints(principal.tenantId),
+      checkpoints: await listCheckpoints(
+        tokenPrincipal?.tenantId ?? browserPrincipal!.tenantId,
+      ),
     });
   } catch (error) {
     console.error("Unable to list checkpoints", error);
@@ -83,7 +90,10 @@ export async function POST(request: NextRequest) {
       { status: 400 },
     );
   }
-  if (!(await hasValidEncryptedHeader(archive, requestedId))) {
+  const headerBytes = new Uint8Array(
+    await archive.slice(0, MAX_ENCRYPTED_HEADER_BYTES + 13).arrayBuffer(),
+  );
+  if (!hasValidEncryptedHeader(headerBytes, requestedId)) {
     return NextResponse.json(
       { error: "Checkpoint encryption header is invalid or does not match its ID." },
       { status: 400 },
@@ -175,38 +185,4 @@ function cleanText(value: FormDataEntryValue | null, maxLength: number) {
 function cleanInteger(value: FormDataEntryValue | null) {
   const parsed = Number.parseInt(typeof value === "string" ? value : "0", 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
-}
-
-async function hasValidEncryptedHeader(archive: File, checkpointId: string) {
-  const magic = new TextEncoder().encode("RELAYCP2\n");
-  const prefix = new Uint8Array(await archive.slice(0, magic.length + 4).arrayBuffer());
-  if (prefix.length !== magic.length + 4) return false;
-  if (!magic.every((byte, index) => prefix[index] === byte)) return false;
-  const headerLength = new DataView(
-    prefix.buffer,
-    prefix.byteOffset + magic.length,
-    4,
-  ).getUint32(0);
-  if (headerLength < 2 || headerLength > 16 * 1024) return false;
-  const headerBytes = new Uint8Array(
-    await archive.slice(magic.length + 4, magic.length + 4 + headerLength).arrayBuffer(),
-  );
-  if (headerBytes.length !== headerLength) return false;
-  try {
-    const header = JSON.parse(new TextDecoder().decode(headerBytes)) as {
-      formatVersion?: unknown;
-      cipher?: unknown;
-      checkpointId?: unknown;
-      nonce?: unknown;
-    };
-    return (
-      header.formatVersion === ENCRYPTION_VERSION &&
-      header.cipher === CHECKPOINT_CIPHER &&
-      header.checkpointId === checkpointId &&
-      typeof header.nonce === "string" &&
-      /^[A-Za-z0-9_-]{16}$/.test(header.nonce)
-    );
-  } catch {
-    return false;
-  }
 }

@@ -362,7 +362,7 @@ function GlobalHeader({
       </label>
 
       <div className="header-account">
-        <span>User-keyed checkpoint registry</span>
+        <span>Locally keyed checkpoint registry</span>
         <span className="avatar">{initials(displayName)}</span>
       </div>
     </header>
@@ -522,7 +522,7 @@ function CheckpointsView({
         description={
           workspaceFilter
             ? `Immutable history for ${workspaceFilter}.`
-            : "Workspace archives encrypted with a key you enter locally and Relay never stores."
+            : "Workspace archives encrypted with a key generated or entered locally and never sent to Relay."
         }
         action={
           <button className="button primary" type="button" onClick={onConnect}>
@@ -562,7 +562,7 @@ function CheckpointsView({
               </div>
             </div>
             <dl className="latest-meta">
-              <div><dt>Metadata</dt><dd>User-keyed locally</dd></div>
+              <div><dt>Metadata</dt><dd>User-controlled locally</dd></div>
               <div><dt>Cipher</dt><dd>{latest.cipher}</dd></div>
               <div><dt>Checkpoint</dt><dd className="mono">{latest.id}</dd></div>
               <div><dt>Integrity</dt><dd className="mono">{shortChecksum(latest.checksum)}</dd></div>
@@ -791,13 +791,13 @@ function SharedView({
         <div>
           <h2>Relay never receives the decryption key.</h2>
           <p>
-            Send the link and your key separately. Restore asks for the key through
-            a hidden local prompt, decrypts, and verifies every path and file hash.
+            Send the link and recovery key separately. Restore uses a protected key
+            file or a hidden local prompt, then verifies every path and file hash.
           </p>
         </div>
         <div className="security-facts">
           <span><Check size={13} /> No key in link</span>
-          <span><Check size={13} /> No stored key</span>
+          <span><Check size={13} /> No Relay key storage</span>
           <span><Check size={13} /> Verified restore</span>
         </div>
       </section>
@@ -937,14 +937,14 @@ Relay URL: ${origin}
    - restore-agent-workspace
 4. Install or update only those folders in this project. Preserve unrelated skills, and ask before replacing locally modified Relay skill files.
 5. Read both SKILL.md files.
-6. Use $agent-workspace-checkpoint to connect this agent to the Relay URL above. Run the skill's browser authorization yourself, open the approval page, and wait for me to approve the short code.
-7. Confirm that the skill reports a connected credential. Do not ask me to run commands or provide an API key. Do not create, upload, download, decrypt, or restore a checkpoint yet.`;
+6. Use $agent-workspace-checkpoint to connect this agent to the Relay URL above. Let the skill open the approval page exactly once and wait for me to approve the short code. Do not open a second browser tab.
+7. Confirm the credential through Relay's authenticated agent-status API. Do not open the dashboard after authorization. Do not ask me to run commands or provide an API key. Do not create, upload, download, decrypt, or restore a checkpoint yet.`;
   const createPrompt = `Use $agent-workspace-checkpoint to create and upload an encrypted checkpoint of the current project labeled "ready-for-handoff".
 
-If the Relay credential is missing or expired, let the skill start browser approval first. Run all commands yourself. Ask me only for the encryption key through the hidden local prompt, never in chat.`;
+If the Relay credential is missing or expired, let the skill open the approval page once, then verify the credential through Relay's API without opening the dashboard. Run all commands yourself. Before creating it, ask whether I want you to generate and securely save a recovery key for me (recommended/default, with no terminal input) or whether I want to enter my own key privately once. Do not ask me to enter it again for confirmation. Upload in small authenticated chunks and verify completion through Relay's API. Never reveal a generated key or ask me to put a key in chat.`;
   const restorePrompt = `Use $restore-agent-workspace to download Relay checkpoint cp_EXAMPLE and restore it into a new workspace at ../restored-workspace.
 
-If the Relay credential is missing or expired, let the skill start browser approval first. Run all commands yourself. Ask me only for the encryption key through the hidden local prompt, never in chat.`;
+If the Relay credential is missing or expired, let the skill open the approval page once, then verify the credential through Relay's API without opening the dashboard. Run all commands yourself. Use the protected locally saved recovery key when available. Ask for a key through the hidden local prompt only if no safe key file is available, and never ask me to put a key in chat.`;
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
@@ -1001,7 +1001,7 @@ If the Relay credential is missing or expired, let the skill start browser appro
                 <span>2</span>
                 <div>
                   <h3>Ask the creation skill</h3>
-                  <p>The skill signs in if needed, prompts for the key, and uploads ciphertext.</p>
+                  <p>The skill signs in if needed, generates a key by default, and uploads ciphertext in API chunks.</p>
                 </div>
                 <UploadCloud size={17} />
               </div>
@@ -1034,7 +1034,7 @@ If the Relay credential is missing or expired, let the skill start browser appro
         </div>
 
         <footer className="modal-footer">
-          <span><ShieldCheck size={14} /> Agent-operated · Browser-approved · User-keyed</span>
+          <span><ShieldCheck size={14} /> Agent-operated · Browser-approved · Locally keyed</span>
           <button className="button primary" type="button" onClick={onClose}>Done</button>
         </footer>
       </section>
@@ -1097,7 +1097,7 @@ async function copyRestorePrompt(
 ) {
   try {
     await copyText(
-      `Use $restore-agent-workspace to download Relay checkpoint ${checkpoint.id} and extract it into a new workspace. If the Relay credential is missing or expired, let the skill start browser approval first. Run all commands yourself, and ask me only for the encryption key through the hidden local prompt.`,
+      `Use $restore-agent-workspace to download Relay checkpoint ${checkpoint.id} and extract it into a new workspace. If the Relay credential is missing or expired, let the skill open the approval page once, then verify the credential through Relay's API without opening the dashboard. Run all commands yourself. Use the protected locally saved recovery key when available; ask for a key through the hidden local prompt only if no safe key file is available, and never ask me to put a key in chat.`,
     );
     setToast("Restore-skill prompt copied.");
   } catch {

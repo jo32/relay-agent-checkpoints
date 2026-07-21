@@ -57,9 +57,18 @@ class SkillBundleTests(unittest.TestCase):
         self.assertIn("Never ask the user to run an authentication command", create_skill)
         self.assertIn("relay_auth.py login", create_skill)
         self.assertIn("Connect to Relay as described above", create_skill)
+        self.assertIn("/api/agent/status", create_skill)
+        self.assertIn("uploads in chunks", create_skill)
+        self.assertIn("upload_checkpoint.py", create_skill)
+        self.assertIn("enters the key once", create_skill)
+        self.assertIn("Do not open the dashboard", create_skill)
         self.assertIn("Never ask the user to run an authentication command", restore_skill)
         self.assertIn("relay_auth.py login", restore_skill)
-        self.assertIn("Continue the download after approval succeeds", restore_skill)
+        self.assertIn("Continue the download after API verification succeeds", restore_skill)
+        self.assertIn("Do not open the Relay dashboard", restore_skill)
+
+        self.assertTrue((SKILL_ROOTS[0] / "scripts" / "relay_upload.py").is_file())
+        self.assertTrue((SKILL_ROOTS[0] / "scripts" / "upload_checkpoint.py").is_file())
 
 
 if __name__ == "__main__":

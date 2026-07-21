@@ -10,9 +10,6 @@ import os
 import secrets
 import tarfile
 import tempfile
-import urllib.error
-import urllib.request
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -26,9 +23,12 @@ from checkpoint_lib import (
 from relay_crypto import (
     RelayCryptoError,
     encrypt_checkpoint,
+    generate_checkpoint_key,
     prompt_checkpoint_key,
+    save_checkpoint_key,
 )
 from relay_credentials import RelayCredentialError, load_access_token
+from relay_upload import RelayUploadError, upload_checkpoint
 
 
 def parse_args() -> argparse.Namespace:
@@ -44,6 +44,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--upload", action="store_true")
     parser.add_argument("--api-url", default=os.environ.get("RELAY_API_URL"))
     parser.add_argument("--api-token", default=os.environ.get("RELAY_API_TOKEN"))
+    key_mode = parser.add_mutually_exclusive_group()
+    key_mode.add_argument(
+        "--generate-key",
+        action="store_const",
+        const="generate",
+        dest="key_mode",
+        help="Generate and securely save a recovery key without prompting (default)",
+    )
+    key_mode.add_argument(
+        "--prompt-key",
+        action="store_const",
+        const="prompt",
+        dest="key_mode",
+        help="Ask for a user-chosen key through the hidden local prompt",
+    )
+    parser.set_defaults(key_mode="generate")
     parser.add_argument("--json", action="store_true", dest="json_output")
     return parser.parse_args()
 
@@ -147,7 +163,10 @@ def main() -> int:
         "encrypted": True,
         "encryptionVersion": 2,
         "cipher": "AES-256-GCM",
+        "keyMode": args.key_mode,
+        "keyGenerated": False,
         "keyStored": False,
+        "keyFile": None,
         "dryRun": args.dry_run,
         "uploaded": False,
         "exclusions": [{"path": item.path, "reason": item.reason} for item in excluded],
@@ -155,11 +174,16 @@ def main() -> int:
 
     if not args.dry_run:
         output_dir.mkdir(parents=True, exist_ok=True)
+        generated_key_path: Path | None = None
         try:
-            checkpoint_key = prompt_checkpoint_key(confirm=True)
-        except RelayCryptoError as error:
-            raise SystemExit(str(error)) from error
-        try:
+            if args.key_mode == "generate":
+                checkpoint_key = generate_checkpoint_key()
+                generated_key_path = save_checkpoint_key(
+                    checkpoint_id,
+                    checkpoint_key,
+                )
+            else:
+                checkpoint_key = prompt_checkpoint_key()
             with tempfile.TemporaryDirectory(
                 prefix="relay-checkpoint-"
             ) as temporary:
@@ -204,9 +228,16 @@ def main() -> int:
                     checkpoint_id,
                     checkpoint_key,
                 )
-        except RelayCryptoError as error:
+        except (OSError, RelayCryptoError, tarfile.TarError) as error:
             archive_path.unlink(missing_ok=True)
+            if generated_key_path is not None:
+                generated_key_path.unlink(missing_ok=True)
             raise SystemExit(str(error)) from error
+
+        if generated_key_path is not None:
+            summary["keyGenerated"] = True
+            summary["keyStored"] = True
+            summary["keyFile"] = str(generated_key_path)
 
         archive_hash = sha256_file(archive_path)
         sidecar = archive_path.with_name(archive_path.name + ".sha256")
@@ -214,13 +245,16 @@ def main() -> int:
         summary["archiveSha256"] = f"sha256:{archive_hash}"
         summary["sidecar"] = str(sidecar)
         if args.upload:
-            upload_result = upload_checkpoint(
-                archive_path=archive_path,
-                api_url=args.api_url,
-                api_token=upload_token,
-                checkpoint_id=checkpoint_id,
-                checksum=summary["archiveSha256"],
-            )
+            try:
+                upload_result = upload_checkpoint(
+                    archive_path=archive_path,
+                    api_url=args.api_url,
+                    api_token=upload_token,
+                    checkpoint_id=checkpoint_id,
+                    checksum=summary["archiveSha256"],
+                )
+            except (OSError, RelayUploadError) as error:
+                raise SystemExit(str(error)) from error
             summary["uploaded"] = True
             summary["relay"] = upload_result
 
@@ -233,7 +267,11 @@ def main() -> int:
         if not args.dry_run:
             print(f"Archive: {archive_path}")
             print(f"Checksum: {summary['archiveSha256']}")
-            print("Encryption key: not stored; enter the same key to restore.")
+            if summary["keyStored"]:
+                print(f"Recovery key: generated and saved to {summary['keyFile']}")
+                print("Keep the recovery key file private and backed up separately.")
+            else:
+                print("Encryption key: not stored; enter the same key to restore.")
             if summary["uploaded"]:
                 print(f"Relay checkpoint: {summary['relay']['checkpoint']['id']}")
         if excluded:
@@ -243,70 +281,6 @@ def main() -> int:
             if len(excluded) > 40:
                 print(f"  … and {len(excluded) - 40} more")
     return 0
-
-
-def upload_checkpoint(
-    *,
-    archive_path: Path,
-    api_url: str,
-    api_token: str,
-    checkpoint_id: str,
-    checksum: str,
-) -> dict[str, object]:
-    boundary = f"----relay-{uuid.uuid4().hex}"
-    fields = {
-        "checkpointId": checkpoint_id,
-        "checksum": checksum,
-        "encryptionVersion": "2",
-        "cipher": "AES-256-GCM",
-    }
-    parts: list[bytes] = []
-    for name, value in fields.items():
-        parts.extend(
-            [
-                f"--{boundary}\r\n".encode(),
-                f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode(),
-                value.encode("utf-8"),
-                b"\r\n",
-            ]
-        )
-    parts.extend(
-        [
-            f"--{boundary}\r\n".encode(),
-            (
-                'Content-Disposition: form-data; name="archive"; '
-                'filename="checkpoint.relay"\r\n'
-            ).encode(),
-            b"Content-Type: application/vnd.relay.checkpoint\r\n\r\n",
-            archive_path.read_bytes(),
-            b"\r\n",
-            f"--{boundary}--\r\n".encode(),
-        ]
-    )
-    body = b"".join(parts)
-    endpoint = api_url.rstrip("/") + "/api/checkpoints"
-    request = urllib.request.Request(
-        endpoint,
-        data=body,
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {api_token}",
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
-            "Content-Length": str(len(body)),
-            "User-Agent": "relay-agent-workspace-checkpoint/2",
-        },
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=120) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as error:
-        detail = error.read().decode("utf-8", errors="replace")
-        raise SystemExit(f"Relay upload failed ({error.code}): {detail}") from error
-    except urllib.error.URLError as error:
-        raise SystemExit(f"Relay upload failed: {error.reason}") from error
-    if not isinstance(payload, dict) or "checkpoint" not in payload:
-        raise SystemExit("Relay upload returned an invalid response")
-    return payload
 
 
 if __name__ == "__main__":

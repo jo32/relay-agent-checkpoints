@@ -5,6 +5,7 @@ import {
   getRuntimeEnv,
 } from "../../../../../db/checkpoints";
 import { getCurrentPrincipal } from "../../../../../lib/principal";
+import { openCheckpointArchive } from "../../../../../lib/checkpoint-objects";
 
 export const dynamic = "force-dynamic";
 
@@ -27,8 +28,12 @@ export async function GET(
     return Response.json({ error: "Checkpoint not found." }, { status: 404 });
   }
 
-  const object = await getRuntimeEnv().CHECKPOINTS.get(checkpoint.objectKey);
-  if (!object) {
+  const archive = await openCheckpointArchive(
+    getRuntimeEnv().CHECKPOINTS,
+    checkpoint.objectKey,
+    checkpoint.sizeBytes,
+  );
+  if (!archive) {
     return Response.json({ error: "Checkpoint archive not found." }, { status: 404 });
   }
 
@@ -37,13 +42,13 @@ export async function GET(
     ? `${checkpoint.id}.relay`
     : `${checkpoint.id}.tar.gz`;
 
-  return new Response(object.body, {
+  return new Response(archive.body, {
     headers: {
       "content-type": encrypted
         ? "application/vnd.relay.checkpoint"
         : "application/gzip",
       "content-disposition": `attachment; filename="${filename}"`,
-      "content-length": String(object.size),
+      "content-length": String(archive.size),
       "x-checkpoint-sha256": checkpoint.checksum,
       "x-checkpoint-id": checkpoint.id,
       "x-checkpoint-encryption": String(checkpoint.encryptionVersion),

@@ -22,6 +22,7 @@ CREATE = SCRIPTS / "create_checkpoint.py"
 INSPECT = SCRIPTS / "inspect_checkpoint.py"
 SHARE = SCRIPTS / "create_share.py"
 AUTH = SCRIPTS / "relay_auth.py"
+UPLOAD = SCRIPTS / "upload_checkpoint.py"
 RESTORE = (
     ROOT
     / ".agents"
@@ -30,8 +31,9 @@ RESTORE = (
     / "scripts"
     / "download_checkpoint.py"
 )
-CHECKPOINT_KEY = base64.urlsafe_b64encode(bytes(range(32))).rstrip(b"=").decode()
-OTHER_KEY = base64.urlsafe_b64encode(bytes(range(31, -1, -1))).rstrip(b"=").decode()
+CHECKPOINT_KEY = "correct horse battery staple 🔐"
+OTHER_KEY = "different horse battery staple 🔐"
+LEGACY_KEY = base64.urlsafe_b64encode(bytes(range(32))).rstrip(b"=").decode()
 
 
 class CheckpointSkillTests(unittest.TestCase):
@@ -43,8 +45,16 @@ class CheckpointSkillTests(unittest.TestCase):
         input_text: str | None = None,
         env: dict[str, str] | None = None,
     ):
+        script_args = list(args)
+        if (
+            script == CREATE
+            and input_text is not None
+            and "--generate-key" not in script_args
+            and "--prompt-key" not in script_args
+        ):
+            script_args.insert(0, "--prompt-key")
         return subprocess.run(
-            [sys.executable, str(script), *args],
+            [sys.executable, str(script), *script_args],
             check=check,
             capture_output=True,
             text=True,
@@ -77,15 +87,22 @@ class CheckpointSkillTests(unittest.TestCase):
                 "--source-agent",
                 "codex",
                 "--json",
-                input_text=f"{CHECKPOINT_KEY}\n{CHECKPOINT_KEY}\n",
+                input_text=f"{CHECKPOINT_KEY}\n",
             )
             payload = json.loads(result.stdout)
             archive = Path(payload["archive"])
             self.assertEqual(archive.suffix, ".relay")
-            self.assertEqual(archive.read_bytes()[:9], b"RELAYCP2\n")
+            encrypted_bytes = archive.read_bytes()
+            self.assertEqual(encrypted_bytes[:9], b"RELAYCP2\n")
+            header_length = int.from_bytes(encrypted_bytes[9:13], "big")
+            header = json.loads(encrypted_bytes[13:13 + header_length])
+            self.assertEqual(header["kdf"]["name"], "scrypt")
+            self.assertEqual(header["kdf"]["N"], 131_072)
+            salt = base64.urlsafe_b64decode(header["kdf"]["salt"] + "==")
+            self.assertEqual(len(salt), 16)
             self.assertNotIn(CHECKPOINT_KEY, result.stdout)
-            self.assertNotIn(CHECKPOINT_KEY.encode(), archive.read_bytes())
-            self.assertNotIn(b"console.log('safe')", archive.read_bytes())
+            self.assertNotIn(CHECKPOINT_KEY.encode(), encrypted_bytes)
+            self.assertNotIn(b"console.log('safe')", encrypted_bytes)
             self.assertNotIn(
                 payload["treeHash"].removeprefix("sha256:")[:12],
                 payload["checkpointId"],
@@ -120,7 +137,96 @@ class CheckpointSkillTests(unittest.TestCase):
             self.assertFalse((restored / ".env").exists())
             self.assertFalse((restored / "leaked.txt").exists())
 
-    def test_create_rejects_mismatched_key_confirmation(self):
+    def test_create_generates_saved_key_without_terminal_input(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            output = base / "out"
+            restored = base / "restored"
+            key_directory = base / "keys"
+            project.mkdir()
+            (project / "README.md").write_text("generated key checkpoint")
+            environment = {"RELAY_KEYS_DIR": str(key_directory)}
+
+            created = json.loads(
+                self.run_script(
+                    CREATE,
+                    "--root",
+                    str(project),
+                    "--output-dir",
+                    str(output),
+                    "--json",
+                    env=environment,
+                ).stdout
+            )
+            key_file = Path(created["keyFile"])
+            generated_key = key_file.read_text(encoding="utf-8").strip()
+            self.assertTrue(created["keyGenerated"])
+            self.assertTrue(created["keyStored"])
+            self.assertEqual(key_file.parent, key_directory.resolve())
+            self.assertEqual(len(generated_key), 43)
+            self.assertNotIn(generated_key, json.dumps(created))
+            self.assertNotIn(generated_key.encode(), Path(created["archive"]).read_bytes())
+            if os.name != "nt":
+                self.assertEqual(key_directory.stat().st_mode & 0o777, 0o700)
+                self.assertEqual(key_file.stat().st_mode & 0o777, 0o600)
+
+            inspected = json.loads(
+                self.run_script(
+                    INSPECT,
+                    "--verify",
+                    "--json",
+                    created["archive"],
+                    env=environment,
+                ).stdout
+            )
+            self.assertTrue(inspected["keyStored"])
+            self.assertEqual(inspected["keyFile"], str(key_file))
+            with archive_server(Path(created["archive"])) as url:
+                restored_result = json.loads(
+                    self.run_script(
+                        RESTORE,
+                        "--checkpoint",
+                        url,
+                        "--destination",
+                        str(restored),
+                        "--json",
+                        env=environment,
+                    ).stdout
+                )
+            self.assertTrue(restored_result["keyStored"])
+            self.assertEqual((restored / "README.md").read_text(), "generated key checkpoint")
+
+    def test_create_accepts_eight_character_key(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            project.mkdir()
+            (project / "README.md").write_text("minimum key length")
+            minimum_key = "12345678"
+            created = json.loads(
+                self.run_script(
+                    CREATE,
+                    "--root",
+                    str(project),
+                    "--output-dir",
+                    str(base / "out"),
+                    "--json",
+                    input_text=f"{minimum_key}\n{minimum_key}\n",
+                ).stdout
+            )
+            inspected = json.loads(
+                self.run_script(
+                    INSPECT,
+                    "--verify",
+                    "--json",
+                    created["archive"],
+                    input_text=f"{minimum_key}\n",
+                ).stdout
+            )
+            self.assertEqual(inspected["errors"], [])
+
+    def test_create_rejects_key_shorter_than_eight_characters(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
             project = base / "project"
@@ -135,11 +241,31 @@ class CheckpointSkillTests(unittest.TestCase):
                 str(output),
                 "--json",
                 check=False,
-                input_text=f"{CHECKPOINT_KEY}\n{OTHER_KEY}\n",
+                input_text="1234567\n",
             )
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("do not match", result.stderr)
+            self.assertIn("at least 8 characters", result.stderr)
             self.assertFalse(output.exists() and any(output.iterdir()))
+
+    def test_create_accepts_user_key_once_without_confirmation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            output = base / "out"
+            project.mkdir()
+            (project / "README.md").write_text("private content")
+            result = self.run_script(
+                CREATE,
+                "--root",
+                str(project),
+                "--output-dir",
+                str(output),
+                "--json",
+                input_text=f"{CHECKPOINT_KEY}\n",
+            )
+            payload = json.loads(result.stdout)
+            self.assertTrue(Path(payload["archive"]).is_file())
+            self.assertNotIn("Confirm checkpoint encryption key", result.stderr)
 
     def test_preserves_tracked_temporary_named_file(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -160,7 +286,7 @@ class CheckpointSkillTests(unittest.TestCase):
                 "--output-dir",
                 str(output),
                 "--json",
-                input_text=f"{CHECKPOINT_KEY}\n{CHECKPOINT_KEY}\n",
+                input_text=f"{CHECKPOINT_KEY}\n",
             )
             with archive_server(Path(json.loads(result.stdout)["archive"])) as url:
                 self.run_script(
@@ -192,7 +318,7 @@ class CheckpointSkillTests(unittest.TestCase):
                     "--output-dir",
                     str(output),
                     "--json",
-                    input_text=f"{CHECKPOINT_KEY}\n{CHECKPOINT_KEY}\n",
+                input_text=f"{CHECKPOINT_KEY}\n",
                 ).stdout
             )
             inspected = self.run_script(
@@ -217,6 +343,92 @@ class CheckpointSkillTests(unittest.TestCase):
             self.assertTrue(json.loads(restored_result.stdout)["encrypted"])
             self.assertEqual((restored / "README.md").read_text(), "hello checkpoint")
 
+    def test_restore_supports_legacy_format_v2_raw_key(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            plaintext = base / "legacy.tar.gz"
+            encrypted = base / "legacy.relay"
+            restored = base / "restored"
+            content = b"legacy encrypted content"
+            digest = hashlib.sha256(content).hexdigest()
+            tree_material = f"README.md\0{digest}\n".encode()
+            manifest = {
+                "checkpointId": "cp_legacy01",
+                "workspace": "legacy",
+                "sourceAgent": "test",
+                "files": [
+                    {
+                        "path": "README.md",
+                        "sha256": f"sha256:{digest}",
+                    }
+                ],
+                "exclusions": [],
+                "treeHash": f"sha256:{hashlib.sha256(tree_material).hexdigest()}",
+            }
+            with tarfile.open(plaintext, "w:gz") as archive:
+                for name, data in {
+                    "README.md": content,
+                    ".agent-checkpoint/manifest.json": json.dumps(manifest).encode(),
+                    ".agent-checkpoint/HANDOFF.md": b"# Legacy handoff\n",
+                }.items():
+                    member = tarfile.TarInfo(name)
+                    member.size = len(data)
+                    member.mode = 0o600
+                    archive.addfile(member, io.BytesIO(data))
+
+            legacy_encrypt = """
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const [input, output, checkpointId] = process.argv.slice(1);
+const key = Buffer.from(fs.readFileSync(0, "utf8").trim(), "base64url");
+const nonce = crypto.randomBytes(12);
+const header = Buffer.from(JSON.stringify({
+  formatVersion: 2,
+  cipher: "AES-256-GCM",
+  checkpointId,
+  nonce: nonce.toString("base64url"),
+}));
+const length = Buffer.alloc(4);
+length.writeUInt32BE(header.length);
+const cipher = crypto.createCipheriv("aes-256-gcm", key, nonce);
+cipher.setAAD(header);
+const ciphertext = Buffer.concat([
+  cipher.update(fs.readFileSync(input)),
+  cipher.final(),
+]);
+fs.writeFileSync(output, Buffer.concat([
+  Buffer.from("RELAYCP2\\n"),
+  length,
+  header,
+  ciphertext,
+  cipher.getAuthTag(),
+]));
+"""
+            subprocess.run(
+                [
+                    "node",
+                    "-e",
+                    legacy_encrypt,
+                    str(plaintext),
+                    str(encrypted),
+                    "cp_legacy01",
+                ],
+                input=f"{LEGACY_KEY}\n",
+                text=True,
+                check=True,
+            )
+
+            with archive_server(encrypted) as url:
+                self.run_script(
+                    RESTORE,
+                    "--checkpoint",
+                    url,
+                    "--destination",
+                    str(restored),
+                    input_text=f"{LEGACY_KEY}\n",
+                )
+            self.assertEqual((restored / "README.md").read_bytes(), content)
+
     def test_restore_rejects_tampered_ciphertext(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
@@ -232,7 +444,7 @@ class CheckpointSkillTests(unittest.TestCase):
                     "--output-dir",
                     str(output),
                     "--json",
-                    input_text=f"{CHECKPOINT_KEY}\n{CHECKPOINT_KEY}\n",
+                input_text=f"{CHECKPOINT_KEY}\n",
                 ).stdout
             )
             tampered = base / "tampered.relay"
@@ -269,7 +481,7 @@ class CheckpointSkillTests(unittest.TestCase):
                     "--output-dir",
                     str(output),
                     "--json",
-                    input_text=f"{CHECKPOINT_KEY}\n{CHECKPOINT_KEY}\n",
+                input_text=f"{CHECKPOINT_KEY}\n",
                 ).stdout
             )
             with archive_server(Path(created["archive"])) as base_url:
@@ -304,7 +516,7 @@ class CheckpointSkillTests(unittest.TestCase):
                     "--output-dir",
                     str(base / "out"),
                     "--json",
-                    input_text=f"{CHECKPOINT_KEY}\n{CHECKPOINT_KEY}\n",
+                input_text=f"{CHECKPOINT_KEY}\n",
                 ).stdout
             )
             with archive_server(Path(created["archive"])) as url:
@@ -366,22 +578,74 @@ class CheckpointSkillTests(unittest.TestCase):
                     "--api-token",
                     token,
                     "--json",
-                    input_text=f"{CHECKPOINT_KEY}\n{CHECKPOINT_KEY}\n",
+                input_text=f"{CHECKPOINT_KEY}\n",
                 )
             payload = json.loads(result.stdout)
             self.assertTrue(payload["uploaded"])
             self.assertEqual(payload["relay"]["checkpoint"]["id"], payload["checkpointId"])
-            self.assertEqual(len(requests), 1)
-            self.assertEqual(requests[0]["authorization"], f"Bearer {token}")
-            self.assertIn(b'name="archive"', requests[0]["body"])
-            self.assertIn(b'name="encryptionVersion"', requests[0]["body"])
-            self.assertIn(b"RELAYCP2\n", requests[0]["body"])
-            self.assertNotIn(b'name="sourceAgent"', requests[0]["body"])
-            self.assertNotIn(b'name="workspaceName"', requests[0]["body"])
-            self.assertNotIn(b'name="handoff"', requests[0]["body"])
-            self.assertNotIn(b"print('relay')", requests[0]["body"])
-            self.assertNotIn(CHECKPOINT_KEY.encode(), requests[0]["body"])
+            self.assertTrue(payload["relay"]["upload"]["apiVerified"])
+            self.assertTrue(all(
+                request["authorization"] == f"Bearer {token}"
+                for request in requests
+            ))
+            self.assertEqual(requests[0]["path"], "/api/checkpoints/uploads")
+            self.assertEqual(requests[-1]["method"], "GET")
+            uploaded_body = b"".join(
+                request["body"]
+                for request in requests
+                if request["method"] == "PUT"
+            )
+            self.assertIn(b"RELAYCP2\n", uploaded_body)
+            self.assertNotIn(b"print('relay')", uploaded_body)
+            self.assertNotIn(CHECKPOINT_KEY.encode(), uploaded_body)
+            self.assertTrue(all(
+                len(request["body"]) <= 1024 * 1024
+                for request in requests
+                if request["method"] == "PUT"
+            ))
             self.assertFalse(payload["keyStored"])
+
+    def test_existing_large_archive_retries_without_key_or_oversized_request(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            project.mkdir()
+            (project / "large.bin").write_bytes(os.urandom(4_800_000))
+            created = json.loads(
+                self.run_script(
+                    CREATE,
+                    "--root",
+                    str(project),
+                    "--output-dir",
+                    str(base / "out"),
+                    "--json",
+                    input_text=f"{CHECKPOINT_KEY}\n",
+                ).stdout
+            )
+            archive = Path(created["archive"])
+            self.assertGreater(archive.stat().st_size, 4_500_000)
+            token = "rly_" + "d" * 64
+            with upload_server(token) as (api_url, requests):
+                retried = json.loads(
+                    self.run_script(
+                        UPLOAD,
+                        str(archive),
+                        "--api-url",
+                        api_url,
+                        "--api-token",
+                        token,
+                        "--json",
+                    ).stdout
+                )
+            put_requests = [item for item in requests if item["method"] == "PUT"]
+            self.assertTrue(retried["uploaded"])
+            self.assertFalse(retried["keyRequired"])
+            self.assertGreater(len(put_requests), 4)
+            self.assertTrue(all(len(item["body"]) <= 1024 * 1024 for item in put_requests))
+            self.assertEqual(
+                sum(len(item["body"]) for item in put_requests),
+                archive.stat().st_size,
+            )
 
     def test_create_share_returns_link_without_key(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -397,7 +661,7 @@ class CheckpointSkillTests(unittest.TestCase):
                     "--output-dir",
                     str(base / "out"),
                     "--json",
-                    input_text=f"{CHECKPOINT_KEY}\n{CHECKPOINT_KEY}\n",
+                input_text=f"{CHECKPOINT_KEY}\n",
                 ).stdout
             )
             token = "rly_" + "b" * 64
@@ -441,8 +705,22 @@ class CheckpointSkillTests(unittest.TestCase):
                 )
                 login_payload = json.loads(login.stdout)
                 self.assertTrue(login_payload["connected"])
+                self.assertTrue(login_payload["remoteVerified"])
                 self.assertNotIn(token, login.stdout)
                 self.assertEqual(credential_file.stat().st_mode & 0o777, 0o600)
+
+                status = self.run_script(
+                    AUTH,
+                    "status",
+                    "--api-url",
+                    api_url,
+                    "--json",
+                    env=environment,
+                )
+                status_payload = json.loads(status.stdout)
+                self.assertTrue(status_payload["connected"])
+                self.assertTrue(status_payload["remoteVerified"])
+                self.assertEqual(status_payload["checkpointCount"], 0)
 
                 created = self.run_script(
                     CREATE,
@@ -454,20 +732,26 @@ class CheckpointSkillTests(unittest.TestCase):
                     "--api-url",
                     api_url,
                     "--json",
-                    input_text=f"{CHECKPOINT_KEY}\n{CHECKPOINT_KEY}\n",
+                input_text=f"{CHECKPOINT_KEY}\n",
                     env=environment,
                 )
                 self.assertTrue(json.loads(created.stdout)["uploaded"])
 
-            self.assertEqual(
-                [request["path"] for request in requests],
-                [
-                    "/api/device/authorize",
-                    "/api/device/token",
-                    "/api/checkpoints",
-                ],
-            )
-            self.assertEqual(requests[-1]["authorization"], f"Bearer {token}")
+            paths = [request["path"] for request in requests]
+            self.assertEqual(paths[:4], [
+                "/api/device/authorize",
+                "/api/device/token",
+                "/api/agent/status",
+                "/api/agent/status",
+            ])
+            self.assertEqual(paths[4], "/api/checkpoints/uploads")
+            self.assertRegex(paths[5], r"/api/checkpoints/uploads/a{32}/parts/1")
+            self.assertEqual(paths[6], f"/api/checkpoints/uploads/{'a' * 32}/complete")
+            self.assertRegex(paths[7], r"/api/checkpoints/cp_[A-Za-z0-9_-]+")
+            self.assertTrue(all(
+                request["authorization"] == f"Bearer {token}"
+                for request in requests[2:]
+            ))
 
 
 @contextmanager
@@ -506,30 +790,103 @@ def archive_server(archive: Path):
 @contextmanager
 def upload_server(expected_token: str):
     requests: list[dict[str, object]] = []
+    upload: dict[str, object] = {}
+    chunks: dict[int, bytes] = {}
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
             length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(length)
+            self._record("POST", body)
+            if not self._authorized():
+                self._json(401, {"error": "unauthorized"})
+                return
+            if self.path == "/api/checkpoints/uploads":
+                upload.update(json.loads(body))
+                chunk_size = 1024 * 1024
+                size = int(upload["sizeBytes"])
+                self._json(
+                    201,
+                    {
+                        "uploadId": "a" * 32,
+                        "checkpointId": upload["checkpointId"],
+                        "chunkSize": chunk_size,
+                        "partCount": (size + chunk_size - 1) // chunk_size,
+                        "sizeBytes": size,
+                        "expiresAt": "2099-01-01T00:00:00.000Z",
+                    },
+                )
+                return
+            if self.path == f"/api/checkpoints/uploads/{'a' * 32}/complete":
+                self._json(201, {"checkpoint": self._checkpoint()})
+                return
+            self._json(404, {"error": "not_found"})
+
+        def do_PUT(self):
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length)
+            self._record("PUT", body)
+            if not self._authorized():
+                self._json(401, {"error": "unauthorized"})
+                return
+            part_number = int(self.path.rsplit("/", 1)[-1])
+            checksum = f"sha256:{hashlib.sha256(body).hexdigest()}"
+            if self.headers.get("X-Chunk-Sha256") != checksum:
+                self._json(400, {"error": "checksum"})
+                return
+            chunks[part_number] = body
+            self._json(
+                200,
+                {
+                    "partNumber": part_number,
+                    "sizeBytes": len(body),
+                    "checksum": checksum,
+                    "etag": checksum[-32:],
+                },
+            )
+
+        def do_GET(self):
+            self._record("GET", b"")
+            if not self._authorized():
+                self._json(401, {"error": "unauthorized"})
+                return
+            checkpoint_id = str(upload.get("checkpointId", ""))
+            if self.path == f"/api/checkpoints/{checkpoint_id}":
+                self._json(200, {"checkpoint": self._checkpoint()})
+                return
+            self._json(404, {"error": "not_found"})
+
+        def do_DELETE(self):
+            self._record("DELETE", b"")
+            self.send_response(204)
+            self.end_headers()
+
+        def _checkpoint(self):
+            return {
+                "id": upload["checkpointId"],
+                "status": "ready",
+                "checksum": upload["checksum"],
+                "sizeBytes": upload["sizeBytes"],
+                "encryptionVersion": 2,
+                "cipher": "AES-256-GCM",
+            }
+
+        def _authorized(self):
+            return self.headers.get("Authorization") == f"Bearer {expected_token}"
+
+        def _record(self, method: str, body: bytes):
             requests.append(
                 {
+                    "method": method,
+                    "path": self.path,
                     "authorization": self.headers.get("Authorization"),
                     "body": body,
                 }
             )
-            marker = b'name="checkpointId"'
-            marker_index = body.index(marker)
-            value_start = body.index(b"\r\n\r\n", marker_index) + 4
-            value_end = body.index(b"\r\n", value_start)
-            checkpoint_id = body[value_start:value_end].decode()
-            response = json.dumps(
-                {"checkpoint": {"id": checkpoint_id, "status": "ready"}}
-            ).encode()
-            self.send_response(
-                201
-                if self.headers.get("Authorization") == f"Bearer {expected_token}"
-                else 401
-            )
+
+        def _json(self, status: int, payload: dict[str, object]):
+            response = json.dumps(payload).encode()
+            self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(response)))
             self.end_headers()
@@ -601,18 +958,14 @@ def share_server(expected_token: str):
 @contextmanager
 def device_upload_server(expected_token: str):
     requests: list[dict[str, object]] = []
+    upload: dict[str, object] = {}
+    chunks: dict[int, bytes] = {}
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
             length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(length)
-            requests.append(
-                {
-                    "path": self.path,
-                    "authorization": self.headers.get("Authorization"),
-                    "body": body,
-                }
-            )
+            self._record("POST", body)
             if self.path == "/api/device/authorize":
                 response = {
                     "device_code": "rdc_" + "d" * 64,
@@ -638,18 +991,105 @@ def device_upload_server(expected_token: str):
                     },
                 )
                 return
-            if self.path == "/api/checkpoints":
-                marker = b'name="checkpointId"'
-                marker_index = body.index(marker)
-                value_start = body.index(b"\r\n\r\n", marker_index) + 4
-                value_end = body.index(b"\r\n", value_start)
-                checkpoint_id = body[value_start:value_end].decode()
+            if not self._authorized():
+                self._json(401, {"error": "unauthorized"})
+                return
+            if self.path == "/api/checkpoints/uploads":
+                upload.update(json.loads(body))
+                chunk_size = 1024 * 1024
+                size = int(upload["sizeBytes"])
                 self._json(
-                    201 if self.headers.get("Authorization") == f"Bearer {expected_token}" else 401,
-                    {"checkpoint": {"id": checkpoint_id, "status": "ready"}},
+                    201,
+                    {
+                        "uploadId": "a" * 32,
+                        "checkpointId": upload["checkpointId"],
+                        "chunkSize": chunk_size,
+                        "partCount": (size + chunk_size - 1) // chunk_size,
+                        "sizeBytes": size,
+                        "expiresAt": "2099-01-01T00:00:00.000Z",
+                    },
                 )
                 return
+            if self.path == f"/api/checkpoints/uploads/{'a' * 32}/complete":
+                self._json(201, {"checkpoint": self._checkpoint()})
+                return
             self._json(404, {"error": "not_found"})
+
+        def do_PUT(self):
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length)
+            self._record("PUT", body)
+            if not self._authorized():
+                self._json(401, {"error": "unauthorized"})
+                return
+            part_number = int(self.path.rsplit("/", 1)[-1])
+            checksum = f"sha256:{hashlib.sha256(body).hexdigest()}"
+            if self.headers.get("X-Chunk-Sha256") != checksum:
+                self._json(400, {"error": "checksum"})
+                return
+            chunks[part_number] = body
+            self._json(
+                200,
+                {
+                    "partNumber": part_number,
+                    "sizeBytes": len(body),
+                    "checksum": checksum,
+                    "etag": checksum[-32:],
+                },
+            )
+
+        def do_GET(self):
+            self._record("GET", b"")
+            if not self._authorized():
+                self._json(401, {"error": "unauthorized"})
+                return
+            if self.path == "/api/agent/status":
+                self._json(
+                    200,
+                    {
+                        "connected": True,
+                        "scopes": [
+                            "checkpoints:read",
+                            "checkpoints:write",
+                            "checkpoints:share",
+                        ],
+                        "checkpointCount": 0,
+                    },
+                )
+                return
+            checkpoint_id = str(upload.get("checkpointId", ""))
+            if self.path == f"/api/checkpoints/{checkpoint_id}":
+                self._json(200, {"checkpoint": self._checkpoint()})
+                return
+            self._json(404, {"error": "not_found"})
+
+        def do_DELETE(self):
+            self._record("DELETE", b"")
+            self.send_response(204)
+            self.end_headers()
+
+        def _checkpoint(self):
+            return {
+                "id": upload["checkpointId"],
+                "status": "ready",
+                "checksum": upload["checksum"],
+                "sizeBytes": upload["sizeBytes"],
+                "encryptionVersion": 2,
+                "cipher": "AES-256-GCM",
+            }
+
+        def _authorized(self):
+            return self.headers.get("Authorization") == f"Bearer {expected_token}"
+
+        def _record(self, method: str, body: bytes):
+            requests.append(
+                {
+                    "method": method,
+                    "path": self.path,
+                    "authorization": self.headers.get("Authorization"),
+                    "body": body,
+                }
+            )
 
         def _json(self, status: int, payload: dict[str, object]):
             response = json.dumps(payload).encode()

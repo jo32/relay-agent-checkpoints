@@ -73,12 +73,19 @@ def login(api_url: str, no_browser: bool, json_output: bool) -> int:
     if not verification_url.startswith(f"{api_url}/"):
         raise SystemExit("Relay returned an unsafe verification URL")
     user_code = str(authorization["user_code"])
+    browser_opened = False
+    if not no_browser:
+        browser_opened = webbrowser.open(verification_url)
     if not json_output:
-        print(f"Open: {verification_url}")
+        if no_browser:
+            print(f"Open this approval page once: {verification_url}")
+        elif browser_opened:
+            print("Approval page opened automatically; do not open it again.")
+        else:
+            print("Automatic browser launch failed.")
+            print(f"Open this approval page once: {verification_url}")
         print(f"One-time code: {user_code}")
         print("Waiting for approval…")
-    if not no_browser:
-        webbrowser.open(verification_url)
 
     device_code = str(authorization["device_code"])
     interval = max(2, int(authorization["interval"]))
@@ -93,6 +100,14 @@ def login(api_url: str, no_browser: bool, json_output: bool) -> int:
             token = str(token_payload.get("access_token", ""))
             expires_at = str(token_payload.get("expires_at", ""))
             scopes = str(token_payload.get("scope", ""))
+            remote_status, remote_payload = request_get_json(
+                f"{api_url}/api/agent/status",
+                token,
+            )
+            if remote_status != 200 or not remote_payload.get("connected"):
+                raise SystemExit(
+                    "Relay issued a credential but its agent API could not verify it"
+                )
             credential_store = save_access_token(
                 api_url,
                 token,
@@ -105,6 +120,8 @@ def login(api_url: str, no_browser: bool, json_output: bool) -> int:
                 "expiresAt": expires_at,
                 "scopes": scopes,
                 "credentialStore": str(credential_store),
+                "remoteVerified": True,
+                "checkpointCount": remote_payload.get("checkpointCount"),
             }
             if json_output:
                 print(json.dumps(result, indent=2))
@@ -129,11 +146,31 @@ def login(api_url: str, no_browser: bool, json_output: bool) -> int:
 
 def show_status(api_url: str, json_output: bool) -> int:
     result = credential_status(api_url)
+    if result["connected"]:
+        token = load_access_token(api_url)
+        remote_status, remote_payload = request_get_json(
+            f"{api_url}/api/agent/status",
+            token,
+        )
+        remote_connected = remote_status == 200 and bool(
+            remote_payload.get("connected")
+        )
+        result["connected"] = remote_connected
+        result["remoteVerified"] = remote_connected
+        if remote_connected:
+            result["checkpointCount"] = remote_payload.get("checkpointCount")
+            result["scopes"] = remote_payload.get("scopes", result.get("scopes"))
+        else:
+            result["remoteError"] = remote_payload.get(
+                "error",
+                f"Relay agent API returned {remote_status}",
+            )
     if json_output:
         print(json.dumps(result, indent=2))
     elif result["connected"]:
         print(f"Connected to {result['apiUrl']}")
         print(f"Expires: {result['expiresAt']}")
+        print(f"Relay API verified; checkpoints: {result.get('checkpointCount', 0)}")
     else:
         print(f"Not connected to {result['apiUrl']}")
     return 0 if result["connected"] else 1
@@ -192,6 +229,34 @@ def request_json(
         return error.code, payload
     except urllib.error.URLError as error:
         raise SystemExit(f"Relay sign-in failed: {error.reason}") from error
+
+
+def request_get_json(
+    url: str,
+    access_token: str,
+) -> tuple[int, dict[str, object]]:
+    request = urllib.request.Request(
+        url,
+        method="GET",
+        headers={
+            "Accept": "application/json",
+            "Authorization": f"Bearer {access_token}",
+            "User-Agent": "relay-device-auth/2",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            data = response.read()
+            return response.status, json.loads(data) if data else {}
+    except urllib.error.HTTPError as error:
+        data = error.read()
+        try:
+            payload = json.loads(data) if data else {}
+        except json.JSONDecodeError:
+            payload = {"error": "invalid_server_response"}
+        return error.code, payload
+    except urllib.error.URLError as error:
+        raise SystemExit(f"Relay agent API check failed: {error.reason}") from error
 
 
 if __name__ == "__main__":
