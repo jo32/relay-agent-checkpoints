@@ -1,4 +1,4 @@
 interface:
   display_name: "Restore Agent Workspace"
-  short_description: "Connect, download, and restore Relay checkpoints"
-  default_prompt: "Use $restore-agent-workspace to connect to Relay if needed, then download, locally decrypt, verify, and extract a checkpoint into a new workspace."
+  short_description: "Merge or separately restore Relay checkpoints"
+  default_prompt: "Use $restore-agent-workspace to ask whether I want to merge the Relay checkpoint into the current agent workspace or restore it into a separate new workspace, then connect if needed, download, locally decrypt, verify, and complete the chosen restore mode."

@@ -29,6 +29,11 @@ export async function GET(
       chunkSize: session.chunkSize,
       partCount: session.partCount,
       expiresAt: session.expiresAt,
+      agent: {
+        name: session.agentName,
+        description: session.agentDescription,
+        mode: session.agentMetadataMode,
+      },
     },
     { headers: { "cache-control": "no-store" } },
   );

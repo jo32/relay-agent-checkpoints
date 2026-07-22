@@ -6,6 +6,7 @@ import {
 } from "../../../../../db/checkpoints";
 import { getCurrentPrincipal } from "../../../../../lib/principal";
 import { openCheckpointArchive } from "../../../../../lib/checkpoint-objects";
+import { agentMetadataHeaders } from "../../../../../lib/agent-metadata";
 
 export const dynamic = "force-dynamic";
 
@@ -52,6 +53,7 @@ export async function GET(
       "x-checkpoint-sha256": checkpoint.checksum,
       "x-checkpoint-id": checkpoint.id,
       "x-checkpoint-encryption": String(checkpoint.encryptionVersion),
+      ...agentMetadataHeaders(checkpoint),
       "cache-control": "private, no-store",
     },
   });

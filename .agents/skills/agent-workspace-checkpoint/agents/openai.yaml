@@ -1,4 +1,4 @@
 interface:
   display_name: "Agent Workspace Checkpoint"
-  short_description: "Connect and create encrypted workspace snapshots"
-  default_prompt: "Use $agent-workspace-checkpoint to connect to Relay if needed, then create and locally encrypt a sanitized checkpoint of this project for handoff."
+  short_description: "Encrypt checkpoints with optional agent profiles"
+  default_prompt: "Use $agent-workspace-checkpoint to connect to Relay if needed, ask whether to share a concise agent name and work summary or use a playful pseudonym, then create, locally encrypt, and upload a sanitized checkpoint of this project for handoff."

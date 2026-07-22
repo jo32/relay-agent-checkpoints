@@ -11,6 +11,7 @@ import tarfile
 import tempfile
 import threading
 import unittest
+import urllib.parse
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -131,6 +132,7 @@ class CheckpointSkillTests(unittest.TestCase):
                     url,
                     "--destination",
                     str(restored),
+                    "--new-workspace",
                     input_text=f"{CHECKPOINT_KEY}\n",
                 )
             self.assertTrue((restored / "src" / "index.js").is_file())
@@ -190,12 +192,107 @@ class CheckpointSkillTests(unittest.TestCase):
                         url,
                         "--destination",
                         str(restored),
+                        "--new-workspace",
                         "--json",
                         env=environment,
                     ).stdout
                 )
             self.assertTrue(restored_result["keyStored"])
             self.assertEqual((restored / "README.md").read_text(), "generated key checkpoint")
+
+    def test_create_defaults_to_playful_pseudonymous_agent_metadata(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            project.mkdir()
+            (project / "README.md").write_text("pseudonymous metadata")
+            created = json.loads(
+                self.run_script(
+                    CREATE,
+                    "--root",
+                    str(project),
+                    "--output-dir",
+                    str(base / "out"),
+                    "--json",
+                    input_text=f"{CHECKPOINT_KEY}\n",
+                ).stdout
+            )
+            self.assertEqual(created["agent"]["mode"], "pseudonymous")
+            self.assertRegex(created["agent"]["name"], r"^[A-Z][a-z]+ [A-Z][a-z]+$")
+            self.assertIn("privacy-minded helper", created["agent"]["description"])
+            metadata_file = Path(created["agentMetadataFile"])
+            metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
+            self.assertEqual(metadata["checkpointId"], created["checkpointId"])
+            self.assertEqual(metadata["agent"], created["agent"])
+            if os.name != "nt":
+                self.assertEqual(metadata_file.stat().st_mode & 0o777, 0o600)
+
+    def test_create_accepts_user_approved_agent_summary(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            project.mkdir()
+            (project / "README.md").write_text("shared metadata")
+            description = "Refactored Relay metadata and verified the encrypted handoff."
+            created = json.loads(
+                self.run_script(
+                    CREATE,
+                    "--root",
+                    str(project),
+                    "--output-dir",
+                    str(base / "out"),
+                    "--agent-metadata",
+                    "shared",
+                    "--agent-name",
+                    "Release Gardener",
+                    "--agent-description",
+                    description,
+                    "--json",
+                    input_text=f"{CHECKPOINT_KEY}\n",
+                ).stdout
+            )
+            self.assertEqual(
+                created["agent"],
+                {
+                    "name": "Release Gardener",
+                    "description": description,
+                    "mode": "shared",
+                },
+            )
+            with archive_server(Path(created["archive"]), created["agent"]) as url:
+                restored = json.loads(
+                    self.run_script(
+                        RESTORE,
+                        "--checkpoint",
+                        url,
+                        "--destination",
+                        str(base / "restored"),
+                        "--new-workspace",
+                        "--json",
+                        input_text=f"{CHECKPOINT_KEY}\n",
+                    ).stdout
+                )
+            self.assertEqual(restored["agent"], created["agent"])
+
+    def test_shared_agent_metadata_requires_name_and_description(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "project"
+            project.mkdir()
+            (project / "README.md").write_text("shared metadata")
+            result = self.run_script(
+                CREATE,
+                "--root",
+                str(project),
+                "--agent-metadata",
+                "shared",
+                "--agent-name",
+                "Release Gardener",
+                "--dry-run",
+                "--json",
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("requires both a name and description", result.stderr)
 
     def test_create_accepts_eight_character_key(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -295,6 +392,7 @@ class CheckpointSkillTests(unittest.TestCase):
                     url,
                     "--destination",
                     str(restored),
+                    "--new-workspace",
                     input_text=f"{CHECKPOINT_KEY}\n",
                 )
             self.assertEqual(
@@ -336,12 +434,131 @@ class CheckpointSkillTests(unittest.TestCase):
                     url,
                     "--destination",
                     str(restored),
+                    "--new-workspace",
                     "--json",
                     input_text=f"{CHECKPOINT_KEY}\n",
                 )
             self.assertEqual(json.loads(restored_result.stdout)["verifiedFiles"], 1)
             self.assertTrue(json.loads(restored_result.stdout)["encrypted"])
             self.assertEqual((restored / "README.md").read_text(), "hello checkpoint")
+
+    def test_restore_requires_an_explicit_new_or_merge_choice(self):
+        result = self.run_script(
+            RESTORE,
+            "--checkpoint",
+            "https://relay.invalid/api/shared/example",
+            "--destination",
+            "/tmp/relay-explicit-mode-test",
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("one of the arguments --new-workspace --merge is required", result.stderr)
+
+    def test_restore_merges_without_overwriting_current_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "checkpoint-project"
+            current = base / "current-project"
+            project.mkdir()
+            current.mkdir()
+            (project / "README.md").write_text("incoming version")
+            (project / "same.txt").write_text("same version")
+            (project / "src").mkdir()
+            (project / "src" / "new.py").write_text("print('incoming')")
+            (current / "README.md").write_text("current version")
+            (current / "same.txt").write_text("same version")
+            (current / "local-only.txt").write_text("keep me")
+            (current / ".agent-checkpoint").mkdir()
+            current_handoff = current / ".agent-checkpoint" / "HANDOFF.md"
+            current_handoff.write_text("current handoff")
+
+            created = json.loads(
+                self.run_script(
+                    CREATE,
+                    "--root",
+                    str(project),
+                    "--output-dir",
+                    str(base / "out"),
+                    "--json",
+                    input_text=f"{CHECKPOINT_KEY}\n",
+                ).stdout
+            )
+            with archive_server(Path(created["archive"])) as url:
+                merged = json.loads(
+                    self.run_script(
+                        RESTORE,
+                        "--checkpoint",
+                        url,
+                        "--destination",
+                        str(current),
+                        "--merge",
+                        "--json",
+                        input_text=f"{CHECKPOINT_KEY}\n",
+                    ).stdout
+                )
+
+            self.assertEqual(merged["restoreMode"], "merge")
+            self.assertEqual(merged["addedFiles"], 1)
+            self.assertEqual(merged["identicalFiles"], 1)
+            self.assertEqual(merged["conflictedFiles"], 1)
+            self.assertEqual((current / "README.md").read_text(), "current version")
+            self.assertEqual((current / "same.txt").read_text(), "same version")
+            self.assertEqual((current / "local-only.txt").read_text(), "keep me")
+            self.assertEqual(
+                (current / "src" / "new.py").read_text(),
+                "print('incoming')",
+            )
+            self.assertEqual(current_handoff.read_text(), "current handoff")
+            incoming = Path(merged["incomingRoot"]) / "README.md"
+            self.assertEqual(incoming.read_text(), "incoming version")
+            self.assertTrue(Path(merged["mergeReport"]).is_file())
+            self.assertTrue(Path(merged["handoff"]).is_file())
+
+    def test_restore_merge_never_writes_through_current_symlinks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "checkpoint-project"
+            current = base / "current-project"
+            outside = base / "outside"
+            project.mkdir()
+            current.mkdir()
+            outside.mkdir()
+            (project / "src").mkdir()
+            (project / "src" / "new.py").write_text("do not escape")
+            (current / "src").symlink_to(outside, target_is_directory=True)
+
+            created = json.loads(
+                self.run_script(
+                    CREATE,
+                    "--root",
+                    str(project),
+                    "--output-dir",
+                    str(base / "out"),
+                    "--json",
+                    input_text=f"{CHECKPOINT_KEY}\n",
+                ).stdout
+            )
+            with archive_server(Path(created["archive"])) as url:
+                merged = json.loads(
+                    self.run_script(
+                        RESTORE,
+                        "--checkpoint",
+                        url,
+                        "--destination",
+                        str(current),
+                        "--merge",
+                        "--json",
+                        input_text=f"{CHECKPOINT_KEY}\n",
+                    ).stdout
+                )
+
+            self.assertEqual(merged["addedFiles"], 0)
+            self.assertEqual(merged["conflictedFiles"], 1)
+            self.assertFalse((outside / "new.py").exists())
+            self.assertEqual(
+                (Path(merged["incomingRoot"]) / "src" / "new.py").read_text(),
+                "do not escape",
+            )
 
     def test_restore_supports_legacy_format_v2_raw_key(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -425,6 +642,7 @@ fs.writeFileSync(output, Buffer.concat([
                     url,
                     "--destination",
                     str(restored),
+                    "--new-workspace",
                     input_text=f"{LEGACY_KEY}\n",
                 )
             self.assertEqual((restored / "README.md").read_bytes(), content)
@@ -458,6 +676,7 @@ fs.writeFileSync(output, Buffer.concat([
                     url,
                     "--destination",
                     str(base / "restored"),
+                    "--new-workspace",
                     check=False,
                     input_text=f"{CHECKPOINT_KEY}\n",
                 )
@@ -491,6 +710,7 @@ fs.writeFileSync(output, Buffer.concat([
                     base_url,
                     "--destination",
                     str(restored),
+                    "--new-workspace",
                     "--json",
                     input_text=f"{CHECKPOINT_KEY}\n",
                 )
@@ -526,6 +746,7 @@ fs.writeFileSync(output, Buffer.concat([
                     url,
                     "--destination",
                     str(base / "restored"),
+                    "--new-workspace",
                     check=False,
                     input_text=f"{OTHER_KEY}\n",
                 )
@@ -548,6 +769,7 @@ fs.writeFileSync(output, Buffer.concat([
                     url,
                     "--destination",
                     str(base / "restored"),
+                    "--new-workspace",
                     check=False,
                 )
             self.assertNotEqual(result.returncode, 0)
@@ -572,6 +794,12 @@ fs.writeFileSync(output, Buffer.concat([
                     "handoff",
                     "--source-agent",
                     "codex",
+                    "--agent-metadata",
+                    "shared",
+                    "--agent-name",
+                    "Release Gardener",
+                    "--agent-description",
+                    "Hardened checkpoint uploads and verified the handoff.",
                     "--upload",
                     "--api-url",
                     api_url,
@@ -584,6 +812,10 @@ fs.writeFileSync(output, Buffer.concat([
             self.assertTrue(payload["uploaded"])
             self.assertEqual(payload["relay"]["checkpoint"]["id"], payload["checkpointId"])
             self.assertTrue(payload["relay"]["upload"]["apiVerified"])
+            self.assertEqual(payload["relay"]["checkpoint"]["agentName"], "Release Gardener")
+            initialized = json.loads(requests[0]["body"])
+            self.assertEqual(initialized["agentMetadataMode"], "shared")
+            self.assertEqual(initialized["agentName"], "Release Gardener")
             self.assertTrue(all(
                 request["authorization"] == f"Bearer {token}"
                 for request in requests
@@ -640,6 +872,16 @@ fs.writeFileSync(output, Buffer.concat([
             put_requests = [item for item in requests if item["method"] == "PUT"]
             self.assertTrue(retried["uploaded"])
             self.assertFalse(retried["keyRequired"])
+            self.assertEqual(retried["agent"], created["agent"])
+            retry_initialized = json.loads(requests[0]["body"])
+            self.assertEqual(
+                retry_initialized["agentName"],
+                created["agent"]["name"],
+            )
+            self.assertEqual(
+                retry_initialized["agentMetadataMode"],
+                "pseudonymous",
+            )
             self.assertGreater(len(put_requests), 4)
             self.assertTrue(all(len(item["body"]) <= 1024 * 1024 for item in put_requests))
             self.assertEqual(
@@ -755,7 +997,7 @@ fs.writeFileSync(output, Buffer.concat([
 
 
 @contextmanager
-def archive_server(archive: Path):
+def archive_server(archive: Path, agent: dict[str, str] | None = None):
     archive_bytes = archive.read_bytes()
     checksum = hashlib.sha256(archive_bytes).hexdigest()
 
@@ -770,6 +1012,16 @@ def archive_server(archive: Path):
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(archive_bytes)))
             self.send_header("X-Checkpoint-Sha256", f"sha256:{checksum}")
+            if agent:
+                self.send_header(
+                    "X-Relay-Agent-Name",
+                    urllib.parse.quote(agent["name"], safe=""),
+                )
+                self.send_header(
+                    "X-Relay-Agent-Description",
+                    urllib.parse.quote(agent["description"], safe=""),
+                )
+                self.send_header("X-Relay-Agent-Metadata-Mode", agent["mode"])
             self.end_headers()
             self.wfile.write(archive_bytes)
 
@@ -867,6 +1119,9 @@ def upload_server(expected_token: str):
                 "status": "ready",
                 "checksum": upload["checksum"],
                 "sizeBytes": upload["sizeBytes"],
+                "agentName": upload["agentName"],
+                "agentDescription": upload["agentDescription"],
+                "agentMetadataMode": upload["agentMetadataMode"],
                 "encryptionVersion": 2,
                 "cipher": "AES-256-GCM",
             }
@@ -1074,6 +1329,9 @@ def device_upload_server(expected_token: str):
                 "status": "ready",
                 "checksum": upload["checksum"],
                 "sizeBytes": upload["sizeBytes"],
+                "agentName": upload["agentName"],
+                "agentDescription": upload["agentDescription"],
+                "agentMetadataMode": upload["agentMetadataMode"],
                 "encryptionVersion": 2,
                 "cipher": "AES-256-GCM",
             }

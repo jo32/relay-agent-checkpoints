@@ -103,6 +103,9 @@ export async function POST(
       workspaceName: "Private workspace",
       label: "Encrypted checkpoint",
       sourceAgent: "Local checkpoint skill",
+      agentName: session.agentName,
+      agentDescription: session.agentDescription,
+      agentMetadataMode: session.agentMetadataMode,
       status: "ready",
       createdAt,
       sizeBytes: session.sizeBytes,
@@ -135,6 +138,9 @@ export async function POST(
         workspaceName: "Private workspace",
         label: "Encrypted checkpoint",
         sourceAgent: "Local checkpoint skill",
+        agentName: session.agentName,
+        agentDescription: session.agentDescription,
+        agentMetadataMode: session.agentMetadataMode,
         status: "ready",
         createdAt,
         sizeBytes: session.sizeBytes,
@@ -156,6 +162,9 @@ function publicCheckpoint(checkpoint: {
   workspaceName: string;
   label: string;
   sourceAgent: string;
+  agentName: string;
+  agentDescription: string;
+  agentMetadataMode: "shared" | "pseudonymous";
   status: string;
   createdAt: string;
   sizeBytes: number;

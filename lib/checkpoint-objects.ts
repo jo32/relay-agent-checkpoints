@@ -1,3 +1,5 @@
+import type { AgentMetadataMode } from "./agent-metadata";
+
 export const MAX_ARCHIVE_BYTES = 100 * 1024 * 1024;
 export const UPLOAD_CHUNK_BYTES = 1024 * 1024;
 export const MAX_UPLOAD_PARTS = Math.ceil(MAX_ARCHIVE_BYTES / UPLOAD_CHUNK_BYTES);
@@ -24,6 +26,9 @@ export type CheckpointUploadSession = {
   checksum: string;
   encryptionVersion: 2;
   cipher: "AES-256-GCM";
+  agentName: string;
+  agentDescription: string;
+  agentMetadataMode: AgentMetadataMode;
   sizeBytes: number;
   chunkSize: number;
   partCount: number;
@@ -94,6 +99,12 @@ function isUploadSession(
     /^sha256:[a-f0-9]{64}$/i.test(value.checksum) &&
     value.encryptionVersion === 2 &&
     value.cipher === "AES-256-GCM" &&
+    typeof value.agentName === "string" &&
+    value.agentName.length > 0 &&
+    typeof value.agentDescription === "string" &&
+    value.agentDescription.length > 0 &&
+    (value.agentMetadataMode === "shared" ||
+      value.agentMetadataMode === "pseudonymous") &&
     Number.isInteger(value.sizeBytes) &&
     value.sizeBytes > 0 &&
     value.sizeBytes <= MAX_ARCHIVE_BYTES &&

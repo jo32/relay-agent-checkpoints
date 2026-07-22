@@ -23,11 +23,17 @@ export type RelayPrincipal = {
 };
 
 export async function getCurrentPrincipal(): Promise<RelayPrincipal | null> {
+  const chatGPTUser = await getChatGPTUser();
+  const useLocalPreview =
+    isLocalPreviewEnabled() && process.env.NODE_ENV !== "production";
+
+  // Keep the public install page independent from private checkpoint storage.
+  if (!chatGPTUser && !useLocalPreview) return null;
+
   await prepareRelayStorage();
   const runtime = getRelayRuntimeEnv();
   const db = runtime.DB!;
 
-  const chatGPTUser = await getChatGPTUser();
   if (chatGPTUser) {
     const user = await ensureChatGPTIdentity(
       db,
@@ -56,7 +62,7 @@ export async function getCurrentPrincipal(): Promise<RelayPrincipal | null> {
     };
   }
 
-  if (isLocalPreviewEnabled() && process.env.NODE_ENV !== "production") {
+  if (useLocalPreview) {
     return {
       userId: "local-preview-user",
       tenantId: "local-preview",

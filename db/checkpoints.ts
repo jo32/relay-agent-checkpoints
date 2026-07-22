@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { ensureRelaySchema } from "./identity";
+import type { AgentMetadataMode } from "../lib/agent-metadata";
 
 export type CheckpointRecord = {
   id: string;
@@ -9,6 +10,9 @@ export type CheckpointRecord = {
   workspaceName: string;
   label: string;
   sourceAgent: string;
+  agentName: string;
+  agentDescription: string;
+  agentMetadataMode: AgentMetadataMode;
   status: string;
   createdAt: string;
   sizeBytes: number;
@@ -62,6 +66,9 @@ export async function listCheckpoints(tenantId: string) {
       workspace_name AS workspaceName,
       label,
       source_agent AS sourceAgent,
+      agent_name AS agentName,
+      agent_description AS agentDescription,
+      agent_metadata_mode AS agentMetadataMode,
       status,
       created_at AS createdAt,
       size_bytes AS sizeBytes,
@@ -95,9 +102,10 @@ export async function insertCheckpoint(record: CheckpointRecord) {
     `INSERT INTO checkpoints (
       id, owner_key, tenant_id, created_by_user_id,
       workspace_name, label, source_agent, status, created_at,
+      agent_name, agent_description, agent_metadata_mode,
       size_bytes, file_count, excluded_count, parent_id, handoff, object_key, checksum,
       encryption_version, cipher, share_token, share_expires_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       record.id,
@@ -109,6 +117,9 @@ export async function insertCheckpoint(record: CheckpointRecord) {
       record.sourceAgent,
       record.status,
       record.createdAt,
+      record.agentName,
+      record.agentDescription,
+      record.agentMetadataMode,
       record.sizeBytes,
       record.fileCount,
       record.excludedCount,
@@ -136,6 +147,9 @@ export async function findCheckpoint(id: string, tenantId: string) {
       workspace_name AS workspaceName,
       label,
       source_agent AS sourceAgent,
+      agent_name AS agentName,
+      agent_description AS agentDescription,
+      agent_metadata_mode AS agentMetadataMode,
       status,
       created_at AS createdAt,
       size_bytes AS sizeBytes,
@@ -198,6 +212,9 @@ export async function findSharedCheckpoint(token: string) {
       workspace_name AS workspaceName,
       label,
       source_agent AS sourceAgent,
+      agent_name AS agentName,
+      agent_description AS agentDescription,
+      agent_metadata_mode AS agentMetadataMode,
       status,
       created_at AS createdAt,
       size_bytes AS sizeBytes,

@@ -10,6 +10,10 @@ import {
   UPLOAD_CHUNK_BYTES,
   uploadSessionKey,
 } from "@/lib/checkpoint-objects";
+import {
+  AgentMetadataError,
+  resolveAgentMetadata,
+} from "@/lib/agent-metadata";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +37,15 @@ export async function POST(request: NextRequest) {
   const encryptionVersion = cleanInteger(input.encryptionVersion);
   const cipher = cleanText(input.cipher, 40);
   const sizeBytes = cleanInteger(input.sizeBytes);
+  let agentMetadata;
+  try {
+    agentMetadata = resolveAgentMetadata(checkpointId, input);
+  } catch (error) {
+    if (error instanceof AgentMetadataError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    throw error;
+  }
   if (!/^cp_[a-z0-9_-]{6,80}$/i.test(checkpointId)) {
     return NextResponse.json({ error: "Checkpoint ID is invalid." }, { status: 400 });
   }
@@ -67,6 +80,7 @@ export async function POST(request: NextRequest) {
     checksum,
     encryptionVersion: 2,
     cipher: "AES-256-GCM",
+    ...agentMetadata,
     sizeBytes,
     chunkSize: UPLOAD_CHUNK_BYTES,
     partCount: Math.ceil(sizeBytes / UPLOAD_CHUNK_BYTES),
@@ -94,6 +108,11 @@ export async function POST(request: NextRequest) {
       chunkSize: session.chunkSize,
       partCount: session.partCount,
       sizeBytes,
+      agent: {
+        name: session.agentName,
+        description: session.agentDescription,
+        mode: session.agentMetadataMode,
+      },
       expiresAt: session.expiresAt,
     },
     { status: 201, headers: { "cache-control": "no-store" } },

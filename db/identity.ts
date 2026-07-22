@@ -100,6 +100,9 @@ const PRODUCT_SCHEMA = [
     workspace_name TEXT NOT NULL,
     label TEXT NOT NULL,
     source_agent TEXT NOT NULL,
+    agent_name TEXT NOT NULL DEFAULT 'Mysterious Marmot',
+    agent_description TEXT NOT NULL DEFAULT 'A privacy-minded helper that summarized progress and prepared an encrypted workspace handoff.',
+    agent_metadata_mode TEXT NOT NULL DEFAULT 'pseudonymous',
     status TEXT NOT NULL DEFAULT 'ready',
     created_at TEXT NOT NULL,
     size_bytes INTEGER NOT NULL,
@@ -173,6 +176,24 @@ async function ensureSchema(db: D1Database): Promise<void> {
     "checkpoints",
     "cipher",
     "TEXT NOT NULL DEFAULT 'none'",
+  );
+  await ensureColumn(
+    db,
+    "checkpoints",
+    "agent_name",
+    "TEXT NOT NULL DEFAULT 'Mysterious Marmot'",
+  );
+  await ensureColumn(
+    db,
+    "checkpoints",
+    "agent_description",
+    "TEXT NOT NULL DEFAULT 'A privacy-minded helper that summarized progress and prepared an encrypted workspace handoff.'",
+  );
+  await ensureColumn(
+    db,
+    "checkpoints",
+    "agent_metadata_mode",
+    "TEXT NOT NULL DEFAULT 'pseudonymous'",
   );
   await ensureColumn(db, "api_tokens", "tenant_id", "TEXT");
   await ensureColumn(db, "api_tokens", "created_by_user_id", "TEXT");

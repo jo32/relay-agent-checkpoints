@@ -35,6 +35,9 @@ type Checkpoint = {
   workspaceName: string;
   label: string;
   sourceAgent: string;
+  agentName: string;
+  agentDescription: string;
+  agentMetadataMode: "shared" | "pseudonymous";
   status: string;
   createdAt: string;
   sizeBytes: number;
@@ -57,6 +60,10 @@ const previewCheckpoints: Checkpoint[] = [
     workspaceName: "Private workspace",
     label: "Encrypted checkpoint",
     sourceAgent: "Local checkpoint skill",
+    agentName: "Quantum Goose",
+    agentDescription:
+      "A privacy-minded helper that summarized progress and prepared an encrypted workspace handoff.",
+    agentMetadataMode: "pseudonymous",
     status: "ready",
     createdAt: "2026-07-18T08:30:00.000Z",
     sizeBytes: 18_400_000,
@@ -74,6 +81,10 @@ const previewCheckpoints: Checkpoint[] = [
     workspaceName: "Private workspace",
     label: "Encrypted checkpoint",
     sourceAgent: "Local checkpoint skill",
+    agentName: "Disco Badger",
+    agentDescription:
+      "Refactored the upload flow and documented the next verification steps.",
+    agentMetadataMode: "shared",
     status: "ready",
     createdAt: "2026-07-18T05:00:00.000Z",
     sizeBytes: 17_900_000,
@@ -91,6 +102,10 @@ const previewCheckpoints: Checkpoint[] = [
     workspaceName: "Private workspace",
     label: "Encrypted checkpoint",
     sourceAgent: "Local checkpoint skill",
+    agentName: "Caffeinated Capybara",
+    agentDescription:
+      "A privacy-minded helper that summarized progress and prepared an encrypted workspace handoff.",
+    agentMetadataMode: "pseudonymous",
     status: "ready",
     createdAt: "2026-07-17T07:00:00.000Z",
     sizeBytes: 9_600_000,
@@ -187,7 +202,7 @@ export default function RelayDashboard({
         !workspaceFilter || checkpoint.workspaceName === workspaceFilter;
       const matchesSearch =
         !query ||
-        `${checkpoint.label} ${checkpoint.workspaceName} ${checkpoint.sourceAgent} ${checkpoint.id}`
+        `${checkpoint.label} ${checkpoint.workspaceName} ${checkpoint.sourceAgent} ${checkpoint.agentName} ${checkpoint.agentDescription} ${checkpoint.id}`
           .toLowerCase()
           .includes(query);
       return matchesWorkspace && matchesSearch;
@@ -465,7 +480,7 @@ function Sidebar({
             <span className="status-dot" />
             <div>
               <strong>{storageOnline ? "Storage connected" : "Storage unavailable"}</strong>
-              <small>{storageOnline ? "Opaque metadata · encrypted objects" : "Retry from the status banner"}</small>
+              <small>{storageOnline ? "Encrypted workspaces · optional agent profiles" : "Retry from the status banner"}</small>
             </div>
           </div>
           <div className="account-row">
@@ -559,10 +574,23 @@ function CheckpointsView({
                     ? "Workspace name, handoff, and file manifest are encrypted inside this checkpoint."
                     : latest.handoff || "Legacy plaintext metadata."}
                 </p>
+                <div className="agent-summary">
+                  <span className="agent-avatar">{initials(latest.agentName)}</span>
+                  <div>
+                    <strong>{latest.agentName}</strong>
+                    <span>{latest.agentDescription}</span>
+                  </div>
+                  <span className={`metadata-mode ${latest.agentMetadataMode}`}>
+                    {latest.agentMetadataMode === "shared" ? "Shared" : "Pseudonym"}
+                  </span>
+                </div>
               </div>
             </div>
             <dl className="latest-meta">
-              <div><dt>Metadata</dt><dd>User-controlled locally</dd></div>
+              <div>
+                <dt>Agent metadata</dt>
+                <dd>{latest.agentMetadataMode === "shared" ? "User approved" : "Privacy-safe alias"}</dd>
+              </div>
               <div><dt>Cipher</dt><dd>{latest.cipher}</dd></div>
               <div><dt>Checkpoint</dt><dd className="mono">{latest.id}</dd></div>
               <div><dt>Integrity</dt><dd className="mono">{shortChecksum(latest.checksum)}</dd></div>
@@ -584,7 +612,7 @@ function CheckpointsView({
         <div className="section-title-row">
           <div>
             <h2>Checkpoint registry</h2>
-            <p>Relay stores ciphertext, its checksum, and minimum routing metadata.</p>
+            <p>Relay stores ciphertext plus the agent metadata you approved or pseudonymized.</p>
           </div>
           {workspaceFilter && (
             <button className="filter-pill" type="button" onClick={onClearWorkspace}>
@@ -597,7 +625,7 @@ function CheckpointsView({
         <div className="data-table">
           <div className="data-table-header">
             <span>Checkpoint</span>
-            <span>Source</span>
+            <span>Agent</span>
             <span>Contents</span>
             <span>Created</span>
             <span />
@@ -670,8 +698,15 @@ function CheckpointRow({
           <span className="mono"><GitBranch size={11} /> {checkpoint.id}</span>
         </div>
       </div>
-      <div>
-        <span className="source-badge"><SquareTerminal size={12} /> {checkpoint.sourceAgent}</span>
+      <div className="agent-cell">
+        <div>
+          <span className="agent-avatar small">{initials(checkpoint.agentName)}</span>
+          <strong>{checkpoint.agentName}</strong>
+          <span className={`metadata-mode ${checkpoint.agentMetadataMode}`}>
+            {checkpoint.agentMetadataMode === "shared" ? "Shared" : "Pseudonym"}
+          </span>
+        </div>
+        <span title={checkpoint.agentDescription}>{checkpoint.agentDescription}</span>
       </div>
       <div className="contents-cell">
         <strong>{checkpoint.cipher}</strong>
@@ -793,6 +828,7 @@ function SharedView({
           <p>
             Send the link and recovery key separately. Restore uses a protected key
             file or a hidden local prompt, then verifies every path and file hash.
+            The approved or pseudonymous agent profile accompanies the checkpoint.
           </p>
         </div>
         <div className="security-facts">
@@ -926,7 +962,7 @@ function SkillIntegrationModal({ onClose }: { onClose: () => void }) {
 
   const skillBundleUrl = `${origin}/skills/relay-checkpoint-skills.zip`;
   const skillChecksumUrl = `${skillBundleUrl}.sha256`;
-  const installPrompt = `Set up Relay's checkpoint skills in this project and connect this agent.
+  const installPrompt = `Install Relay's checkpoint skills in this project. No Relay sign-in is needed for installation.
 
 Relay URL: ${origin}
 
@@ -937,12 +973,11 @@ Relay URL: ${origin}
    - restore-agent-workspace
 4. Install or update only those folders in this project. Preserve unrelated skills, and ask before replacing locally modified Relay skill files.
 5. Read both SKILL.md files.
-6. Use $agent-workspace-checkpoint to connect this agent to the Relay URL above. Let the skill open the approval page exactly once and wait for me to approve the short code. Do not open a second browser tab.
-7. Confirm the credential through Relay's authenticated agent-status API. Do not open the dashboard after authorization. Do not ask me to run commands or provide an API key. Do not create, upload, download, decrypt, or restore a checkpoint yet.`;
+6. Stop after installation. Do not sign in, connect an account, create a checkpoint, upload, download, decrypt, or restore anything yet.`;
   const createPrompt = `Use $agent-workspace-checkpoint to create and upload an encrypted checkpoint of the current project labeled "ready-for-handoff".
 
-If the Relay credential is missing or expired, let the skill open the approval page once, then verify the credential through Relay's API without opening the dashboard. Run all commands yourself. Before creating it, ask whether I want you to generate and securely save a recovery key for me (recommended/default, with no terminal input) or whether I want to enter my own key privately once. Do not ask me to enter it again for confirmation. Upload in small authenticated chunks and verify completion through Relay's API. Never reveal a generated key or ask me to put a key in chat.`;
-  const restorePrompt = `Use $restore-agent-workspace to download Relay checkpoint cp_EXAMPLE and restore it into a new workspace at ../restored-workspace.
+If the Relay credential is missing or expired, let the skill open the approval page once, then verify the credential through Relay's API without opening the dashboard. Run all commands yourself. Before creating it, ask me two things in one short question: whether to generate and securely save a recovery key for me (recommended/default, with no terminal input) or let me enter my own key privately once; and whether Relay may display a name and one-sentence summary of what this agent did. If I decline agent metadata or do not choose, generate a playful pseudonym and use a generic privacy-safe description. Show me shared metadata before uploading it. Never include secrets, private paths, code, or workspace details in agent metadata. Upload in small authenticated chunks and verify completion through Relay's API. Never reveal a generated key or ask me to put a key in chat.`;
+  const restorePrompt = `Use $restore-agent-workspace to download Relay checkpoint cp_EXAMPLE. Before doing anything else, ask whether I want to merge it into the current agent workspace or restore it into a separate new workspace. Do not default to either mode.
 
 If the Relay credential is missing or expired, let the skill open the approval page once, then verify the credential through Relay's API without opening the dashboard. Run all commands yourself. Use the protected locally saved recovery key when available. Ask for a key through the hidden local prompt only if no safe key file is available, and never ask me to put a key in chat.`;
 
@@ -960,7 +995,7 @@ If the Relay credential is missing or expired, let the skill open the approval p
             <span className="modal-symbol"><SquareTerminal size={18} /></span>
             <div>
               <p className="eyebrow">Agent setup</p>
-              <h2 id="integration-title">Install and connect skills</h2>
+              <h2 id="integration-title">Install Relay skills</h2>
             </div>
           </div>
           <button ref={closeRef} className="icon-control" type="button" onClick={onClose} aria-label="Close">
@@ -972,9 +1007,10 @@ If the Relay credential is missing or expired, let the skill open the approval p
           <div className="modal-note">
             <Database size={17} />
             <p>
-              Your agent uses the Relay skills for installation, sign-in, upload,
-              download, and restore. Your only browser step is approving the
-              one-time code. The separate encryption key stays local.
+              Installation is public and needs no account. When you later ask
+              for a backup or restore, the skill starts the one-time browser
+              approval if needed. The separate encryption key stays local, and
+              agent metadata is shared only with approval or replaced by a playful alias.
             </p>
           </div>
 
@@ -982,8 +1018,8 @@ If the Relay credential is missing or expired, let the skill open the approval p
             <div className="step-heading">
               <span>1</span>
               <div>
-                <h3>Ask your agent to install and connect</h3>
-                <p>The agent downloads and verifies the skills, then starts browser sign-in.</p>
+                <h3>Ask your agent to install</h3>
+                <p>The agent downloads and verifies the skills, with no sign-in.</p>
               </div>
               <ShieldCheck size={17} />
             </div>
@@ -1097,7 +1133,7 @@ async function copyRestorePrompt(
 ) {
   try {
     await copyText(
-      `Use $restore-agent-workspace to download Relay checkpoint ${checkpoint.id} and extract it into a new workspace. If the Relay credential is missing or expired, let the skill open the approval page once, then verify the credential through Relay's API without opening the dashboard. Run all commands yourself. Use the protected locally saved recovery key when available; ask for a key through the hidden local prompt only if no safe key file is available, and never ask me to put a key in chat.`,
+      `Use $restore-agent-workspace to download Relay checkpoint ${checkpoint.id}. Before doing anything else, ask whether I want to merge it into the current agent workspace or restore it into a separate new workspace; do not default to either mode. If the Relay credential is missing or expired, let the skill open the approval page once, then verify the credential through Relay's API without opening the dashboard. Run all commands yourself. Use the protected locally saved recovery key when available; ask for a key through the hidden local prompt only if no safe key file is available, and never ask me to put a key in chat.`,
     );
     setToast("Restore-skill prompt copied.");
   } catch {

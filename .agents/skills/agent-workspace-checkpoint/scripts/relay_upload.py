@@ -22,6 +22,7 @@ def upload_checkpoint(
     api_token: str,
     checkpoint_id: str,
     checksum: str,
+    agent_metadata: dict[str, str],
 ) -> dict[str, object]:
     endpoint = api_url.rstrip("/")
     size_bytes = archive_path.stat().st_size
@@ -35,6 +36,9 @@ def upload_checkpoint(
             "encryptionVersion": 2,
             "cipher": "AES-256-GCM",
             "sizeBytes": size_bytes,
+            "agentName": agent_metadata["name"],
+            "agentDescription": agent_metadata["description"],
+            "agentMetadataMode": agent_metadata["mode"],
         },
     )
     upload_id = str(initialized.get("uploadId", ""))
@@ -105,6 +109,11 @@ def upload_checkpoint(
             or str(verified_checkpoint.get("checksum", "")).lower()
             != checksum.lower()
             or verified_checkpoint.get("sizeBytes") != size_bytes
+            or verified_checkpoint.get("agentName") != agent_metadata["name"]
+            or verified_checkpoint.get("agentDescription")
+            != agent_metadata["description"]
+            or verified_checkpoint.get("agentMetadataMode")
+            != agent_metadata["mode"]
         ):
             raise RelayUploadError("Relay API could not verify the stored checkpoint")
         completed["upload"] = {

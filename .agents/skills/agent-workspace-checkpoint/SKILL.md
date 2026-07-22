@@ -1,11 +1,11 @@
 ---
 name: agent-workspace-checkpoint
-description: Connect or sign a local agent in to Relay through browser approval, then create, sanitize, locally encrypt, inspect, and upload immutable project checkpoints. Use when connecting an agent to Relay, pausing unfinished work, preserving tracked and untracked workspace state, handing a project to another person or machine, forking work, or publishing a restorable zero-knowledge checkpoint without dependencies, caches, credentials, VCS internals, raw agent runtime data, or temporary files.
+description: Connect or sign a local agent in to Relay through browser approval, then create, sanitize, locally encrypt, inspect, and upload immutable project checkpoints with user-approved or pseudonymous agent metadata. Use when connecting an agent to Relay, pausing unfinished work, preserving tracked and untracked workspace state, handing a project to another person or machine, forking work, or publishing a restorable zero-knowledge checkpoint without dependencies, caches, credentials, VCS internals, raw agent runtime data, or temporary files.
 ---
 
 # Agent Workspace Checkpoint
 
-Create a safe archive, offer to generate a recovery key for the user or let them enter one privately, derive a 256-bit key locally with salted scrypt, encrypt locally, then upload only ciphertext to Relay. Generated recovery keys stay in a protected local file outside the project; user-entered keys are not stored. Neither kind is sent to Relay. Do not restore or execute a checkpoint with this skill; use `$restore-agent-workspace` for that.
+Create a safe archive, offer to generate a recovery key for the user or let them enter one privately, summarize the agent's work, derive a 256-bit key locally with salted scrypt, encrypt locally, then upload ciphertext and the approved agent profile to Relay. Generated recovery keys stay in a protected local file outside the project; user-entered keys are not stored. Neither kind is sent to Relay. Do not restore or execute a checkpoint with this skill; use `$restore-agent-workspace` for that.
 
 ## Connect to Relay
 
@@ -35,8 +35,13 @@ Never request a Relay access credential or encryption key in chat. Never place e
 
 1. Connect to Relay as described above if the saved credential is unavailable or expired.
 2. Identify the project root.
-3. Before a non-dry-run creation, ask the user: “Would you like me to generate and securely save a recovery key for you (recommended; no terminal input), or would you prefer to enter your own key privately?” Do not ask again if the user already stated a preference. Treat generation as the recommended/default choice.
-4. Summarize the objective, completed work, blockers, validation state, and next steps in a short Markdown handoff.
+3. Before a non-dry-run creation, ask one short question covering both choices:
+   - “Would you like me to generate and securely save a recovery key (recommended; no terminal input), or would you prefer to enter your own key privately?”
+   - “May Relay display a name and one-sentence description of what this agent did, or should I use a playful pseudonym with a generic privacy-safe description?”
+   Do not ask again for choices the user already provided. Treat key generation and pseudonymous metadata as safe defaults when the user does not choose.
+4. Summarize the objective, completed work, blockers, validation state, and next steps in a short Markdown handoff. Separately prepare the public agent metadata:
+   - For shared metadata, choose a concise agent name and summarize the agent's completed activity in one sentence. Show both to the user before upload. Never include secrets, code, private paths, user identities, private workspace names, or sensitive project details.
+   - When the user declines or does not choose, use `--agent-metadata pseudonymous`. Let the script generate a playful name and fixed privacy-safe description; do not ask for another name.
 5. Preview the file selection:
 
 ```bash
@@ -56,6 +61,9 @@ python3 scripts/create_checkpoint.py \
   --label before-handoff \
   --handoff-file /path/to/handoff.md \
   --source-agent codex \
+  --agent-metadata shared \
+  --agent-name "Release Gardener" \
+  --agent-description "Hardened checkpoint uploads and documented the verified handoff." \
   --generate-key \
   --upload \
   --json
@@ -64,6 +72,8 @@ python3 scripts/create_checkpoint.py \
 The generated 43-character recovery key is saved under the protected Relay configuration directory with file mode `0600`. Return the recovery-key file path, but never read or reveal its contents in chat. Tell the user to keep that file private and back it up separately from the checkpoint.
 
 If the user chooses their own key, add `--prompt-key` instead of `--generate-key`. Only this path uses a hidden local prompt, and the user enters the key once—never ask them to repeat it for confirmation. The key may contain any 8 or more characters, including spaces and Unicode; a longer, unique passphrase is strongly recommended. Never request the key in chat or place it in command arguments, environment variables, project files, logs, handoff text, or API requests.
+
+For pseudonymous metadata, omit `--agent-name` and `--agent-description` and use `--agent-metadata pseudonymous`. The script generates names such as “Quantum Goose” or “Caffeinated Capybara.” Agent metadata is intentionally visible to Relay and share recipients; encrypted workspace metadata remains private. The script stores the exact agent profile in a permission-restricted `.metadata.json` sidecar beside the encrypted archive so a retry does not need to ask again.
 
 If encryption succeeded but upload failed, retry the existing `.relay` file without its encryption key and without recreating the checkpoint:
 
@@ -74,9 +84,9 @@ python3 scripts/upload_checkpoint.py \
   --json
 ```
 
-This verifies the archive and sidecar checksum, reads only the public encrypted header, uploads in chunks, and confirms the stored ID, size, and checksum through Relay's agent API. It must never prompt for or decrypt with the checkpoint key. Do not open the dashboard to verify the upload.
+This verifies the archive and sidecar checksum, reads only the public encrypted header, reuses the saved agent profile (or creates a playful pseudonym for an older archive), uploads in chunks, and confirms the stored ID, size, checksum, and agent metadata through Relay's agent API. It must never prompt for or decrypt with the checkpoint key. Do not open the dashboard to verify the upload.
 
-Return the Relay checkpoint ID, archive checksum, included and excluded counts, and the local archive path.
+Return the Relay checkpoint ID, archive checksum, agent name, agent description, metadata mode, included and excluded counts, and the local archive path.
 
 The output must be a format-v2 `.relay` file encrypted with AES-256-GCM. Derive its 256-bit cipher key with scrypt and a fresh random salt stored in the authenticated header. Relay must never receive the recovery key. Generated keys are stored only in the protected local key directory; user-entered keys are never stored, remembered, recovered, or synchronized. Losing both the key and every backup makes the checkpoint unrecoverable. Continue to support restoring older format-v2 checkpoints that used a 43-character base64url key directly.
 

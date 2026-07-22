@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download, validate, and restore a Relay checkpoint into a new workspace."""
+"""Download, validate, and restore or merge a Relay checkpoint."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import getpass
 import hashlib
 import json
 import os
+import re
 import tarfile
 import tempfile
 import urllib.error
@@ -38,6 +39,21 @@ def parse_args() -> argparse.Namespace:
         help="Relay checkpoint ID or expiring share URL",
     )
     parser.add_argument("--destination", type=Path, required=True)
+    restore_mode = parser.add_mutually_exclusive_group(required=True)
+    restore_mode.add_argument(
+        "--new-workspace",
+        action="store_const",
+        const="new",
+        dest="restore_mode",
+        help="restore into a new or empty workspace",
+    )
+    restore_mode.add_argument(
+        "--merge",
+        action="store_const",
+        const="merge",
+        dest="restore_mode",
+        help="merge into an existing workspace without overwriting conflicts",
+    )
     parser.add_argument("--api-url", default=os.environ.get("RELAY_API_URL"))
     parser.add_argument("--api-token", default=os.environ.get("RELAY_API_TOKEN"))
     parser.add_argument(
@@ -61,7 +77,13 @@ def main() -> int:
     if destination_input.is_symlink():
         raise SystemExit("Destination cannot be a symbolic link")
     destination = destination_input.resolve()
-    if destination.exists() and any(destination.iterdir()):
+    if destination.exists() and not destination.is_dir():
+        raise SystemExit(f"Destination must be a directory: {destination}")
+    if (
+        args.restore_mode == "new"
+        and destination.exists()
+        and any(destination.iterdir())
+    ):
         raise SystemExit(f"Destination must be empty: {destination}")
 
     url, needs_token = checkpoint_url(checkpoint_input, args.api_url)
@@ -82,7 +104,7 @@ def main() -> int:
         archive_checksum = f"sha256:{sha256_file(downloaded_path)}"
         relay_checksum = relay_metadata.get("checksum")
         if (
-            relay_checksum
+            isinstance(relay_checksum, str)
             and normalize_checksum(relay_checksum) != archive_checksum
         ):
             raise SystemExit(
@@ -103,7 +125,7 @@ def main() -> int:
                     )
                 relay_checkpoint_id = relay_metadata.get("checkpointId")
                 if (
-                    relay_checkpoint_id
+                    isinstance(relay_checkpoint_id, str)
                     and relay_checkpoint_id != checkpoint_id
                 ):
                     raise RelayCryptoError(
@@ -129,7 +151,11 @@ def main() -> int:
             except RelayCryptoError as error:
                 raise SystemExit(str(error)) from error
 
-        result = restore_archive(archive_path, destination)
+        result = restore_archive(
+            archive_path,
+            destination,
+            merge=args.restore_mode == "merge",
+        )
         result.update(
             {
                 "downloadUrl": url,
@@ -139,6 +165,7 @@ def main() -> int:
                 "cipher": "AES-256-GCM" if encrypted else "none",
                 "keyStored": used_key_file is not None,
                 "keyFile": str(used_key_file) if used_key_file else None,
+                "agent": relay_metadata.get("agent"),
             }
         )
         if args.keep_archive:
@@ -151,15 +178,29 @@ def main() -> int:
         print(json.dumps(result, indent=2))
     else:
         print(
-            f"Restored {result['verifiedFiles']} verified files "
+            f"{('Merged' if result['restoreMode'] == 'merge' else 'Restored')} "
+            f"{result['verifiedFiles']} verified files "
             f"to {result['destination']}"
         )
+        if result["restoreMode"] == "merge":
+            print(
+                f"Merge result: {result['addedFiles']} added, "
+                f"{result['identicalFiles']} identical, "
+                f"{result['conflictedFiles']} awaiting reconciliation."
+            )
+            print(f"Merge report: {result['mergeReport']}")
         if result["encrypted"]:
             if result["keyStored"]:
                 print(f"Recovery key: loaded from {result['keyFile']}")
             else:
                 print("Encryption key: entered interactively and not stored.")
         print(f"Read the handoff: {result['handoff']}")
+        if isinstance(result.get("agent"), dict):
+            agent = result["agent"]
+            print(
+                f"Checkpoint agent: {agent['name']} ({agent['mode']}) — "
+                f"{agent['description']}"
+            )
     return 0
 
 
@@ -188,7 +229,7 @@ def download_archive(
     url: str,
     destination: Path,
     api_token: str | None,
-) -> dict[str, str]:
+) -> dict[str, object]:
     headers = {"User-Agent": "relay-restore-agent-workspace/2"}
     if api_token:
         headers["Authorization"] = f"Bearer {api_token}"
@@ -210,7 +251,7 @@ def download_archive(
                     if total > MAX_EXTRACTED_BYTES:
                         raise SystemExit("Downloaded checkpoint exceeds the size limit")
                     output.write(chunk)
-            return {
+            metadata: dict[str, object] = {
                 key: value
                 for key, value in {
                     "checksum": response.headers.get("x-checkpoint-sha256"),
@@ -218,6 +259,10 @@ def download_archive(
                 }.items()
                 if value
             }
+            agent = decode_agent_metadata(response.headers)
+            if agent:
+                metadata["agent"] = agent
+            return metadata
     except urllib.error.HTTPError as error:
         detail = error.read().decode("utf-8", errors="replace")
         raise SystemExit(
@@ -227,7 +272,30 @@ def download_archive(
         raise SystemExit(f"Relay download failed: {error.reason}") from error
 
 
-def restore_archive(archive_path: Path, destination: Path) -> dict[str, object]:
+def decode_agent_metadata(headers) -> dict[str, str] | None:
+    encoded_name = headers.get("x-relay-agent-name")
+    encoded_description = headers.get("x-relay-agent-description")
+    mode = headers.get("x-relay-agent-metadata-mode")
+    if not encoded_name and not encoded_description and not mode:
+        return None
+    if not encoded_name or not encoded_description or mode not in {
+        "shared",
+        "pseudonymous",
+    }:
+        raise SystemExit("Relay returned invalid checkpoint agent metadata")
+    name = urllib.parse.unquote(encoded_name)
+    description = urllib.parse.unquote(encoded_description)
+    if not name or len(name) > 80 or not description or len(description) > 280:
+        raise SystemExit("Relay returned invalid checkpoint agent metadata")
+    return {"name": name, "description": description, "mode": mode}
+
+
+def restore_archive(
+    archive_path: Path,
+    destination: Path,
+    *,
+    merge: bool = False,
+) -> dict[str, object]:
     seen: set[str] = set()
     try:
         archive = tarfile.open(archive_path, "r:gz")
@@ -253,6 +321,7 @@ def restore_archive(archive_path: Path, destination: Path) -> dict[str, object]:
             total_size += member.size
             if total_size > MAX_EXTRACTED_BYTES:
                 raise SystemExit("Checkpoint exceeds the extracted-size limit")
+        validate_archive_tree(members)
 
         required = {
             ".agent-checkpoint/manifest.json",
@@ -268,6 +337,8 @@ def restore_archive(archive_path: Path, destination: Path) -> dict[str, object]:
             manifest = json.load(manifest_source)
         except (json.JSONDecodeError, UnicodeDecodeError) as error:
             raise SystemExit("Checkpoint manifest is invalid") from error
+        if not isinstance(manifest, dict):
+            raise SystemExit("Checkpoint manifest must be an object")
 
         expected_files = manifest.get("files")
         if not isinstance(expected_files, list):
@@ -282,6 +353,10 @@ def restore_archive(archive_path: Path, destination: Path) -> dict[str, object]:
             if not isinstance(path, str) or not isinstance(digest, str):
                 raise SystemExit("Malformed file record in manifest")
             path = validate_member_name(path)
+            if path.startswith(".agent-checkpoint/"):
+                raise SystemExit(
+                    f"Manifest uses the reserved checkpoint metadata path: {path}"
+                )
             if path in expected_paths:
                 raise SystemExit(f"Duplicate manifest file: {path}")
             expected_paths.add(path)
@@ -316,6 +391,15 @@ def restore_archive(archive_path: Path, destination: Path) -> dict[str, object]:
         if expected_tree and normalize_checksum(str(expected_tree)) != actual_tree:
             raise SystemExit("Checkpoint tree hash does not match the manifest")
 
+        if merge:
+            return merge_archive(
+                archive,
+                members,
+                expected_files,
+                manifest,
+                destination,
+            )
+
         destination.mkdir(parents=True, exist_ok=True)
         for member in members:
             name = validate_member_name(member.name)
@@ -323,31 +407,253 @@ def restore_archive(archive_path: Path, destination: Path) -> dict[str, object]:
             if member.isdir():
                 target.mkdir(parents=True, exist_ok=True)
                 continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            source = archive.extractfile(member)
-            if source is None:
-                raise SystemExit(f"Archive member is unreadable: {name}")
-            with target.open("xb") as output:
-                for chunk in iter(lambda: source.read(1024 * 1024), b""):
-                    output.write(chunk)
-            os.chmod(target, member.mode & 0o777)
+            write_archive_member(archive, member, target)
 
     for expected in expected_files:
-        path = expected["path"]
-        target = destination.joinpath(*PurePosixPath(validate_member_name(path)).parts)
-        if not target.is_file():
-            raise SystemExit(f"Missing restored file: {path}")
-        if f"sha256:{sha256_file(target)}" != normalize_checksum(expected["sha256"]):
-            raise SystemExit(f"Restored file hash mismatch: {path}")
+        verify_file(
+            destination.joinpath(
+                *PurePosixPath(validate_member_name(expected["path"])).parts
+            ),
+            expected["path"],
+            expected["sha256"],
+            "restored",
+        )
 
+    return restore_result(
+        manifest,
+        destination,
+        len(expected_files),
+        destination / ".agent-checkpoint" / "HANDOFF.md",
+        restore_mode="new",
+    )
+
+
+def merge_archive(
+    archive: tarfile.TarFile,
+    members: list[tarfile.TarInfo],
+    expected_files: list[dict[str, object]],
+    manifest: dict[str, object],
+    destination: Path,
+) -> dict[str, object]:
+    destination.mkdir(parents=True, exist_ok=True)
+    checkpoint_id = str(manifest.get("checkpointId") or "unknown")
+    merge_id = (
+        checkpoint_id
+        if re.fullmatch(r"cp_[A-Za-z0-9_-]+", checkpoint_id)
+        else f"checkpoint-{hashlib.sha256(checkpoint_id.encode()).hexdigest()[:16]}"
+    )
+    checkpoint_root = destination / ".agent-checkpoint"
+    merges_root = checkpoint_root / "merges"
+    merge_root = merges_root / merge_id
+    require_safe_directory(destination, checkpoint_root)
+    require_safe_directory(destination, merges_root)
+    if merge_root.exists() or merge_root.is_symlink():
+        raise SystemExit(f"Checkpoint already has a merge record: {merge_root}")
+
+    added: list[dict[str, object]] = []
+    identical: list[dict[str, object]] = []
+    conflicts: list[dict[str, object]] = []
+    for expected in expected_files:
+        path = validate_member_name(str(expected["path"]))
+        if path.startswith(".agent-checkpoint/"):
+            continue
+        expected_checksum = normalize_checksum(str(expected["sha256"]))
+        target = destination.joinpath(*PurePosixPath(path).parts)
+        blocked_by = unsafe_existing_parent(destination, target.parent)
+        if blocked_by is not None:
+            conflicts.append(
+                {
+                    "path": path,
+                    "reason": f"parent is not a safe directory: {blocked_by}",
+                    "checkpointSha256": expected_checksum,
+                    "currentSha256": None,
+                }
+            )
+        elif target.is_symlink():
+            conflicts.append(
+                {
+                    "path": path,
+                    "reason": "current path is a symbolic link",
+                    "checkpointSha256": expected_checksum,
+                    "currentSha256": None,
+                }
+            )
+        elif not target.exists():
+            added.append(expected)
+        elif target.is_file():
+            try:
+                current_checksum = f"sha256:{sha256_file(target)}"
+            except OSError:
+                conflicts.append(
+                    {
+                        "path": path,
+                        "reason": "current file could not be read for comparison",
+                        "checkpointSha256": expected_checksum,
+                        "currentSha256": None,
+                    }
+                )
+                continue
+            record = {
+                "path": path,
+                "checkpointSha256": expected_checksum,
+                "currentSha256": current_checksum,
+            }
+            if current_checksum == expected_checksum:
+                identical.append(record)
+            else:
+                conflicts.append({**record, "reason": "file contents differ"})
+        else:
+            conflicts.append(
+                {
+                    "path": path,
+                    "reason": "current path is not a regular file",
+                    "checkpointSha256": expected_checksum,
+                    "currentSha256": None,
+                }
+            )
+
+    merge_root.mkdir(parents=True)
+    source_root = merge_root / "source"
+    for member in members:
+        name = validate_member_name(member.name)
+        if not name.startswith(".agent-checkpoint/") or member.isdir():
+            continue
+        target = source_root.joinpath(*PurePosixPath(name).parts)
+        write_archive_member(archive, member, target)
+
+    expected_by_path = {
+        validate_member_name(str(item["path"])): item for item in expected_files
+    }
+    for expected in added:
+        path = validate_member_name(str(expected["path"]))
+        member = archive.getmember(path)
+        target = destination.joinpath(*PurePosixPath(path).parts)
+        write_archive_member(archive, member, target)
+        verify_file(target, path, expected["sha256"], "merged")
+
+    incoming_root = merge_root / "incoming"
+    for conflict in conflicts:
+        path = str(conflict["path"])
+        expected = expected_by_path[path]
+        member = archive.getmember(path)
+        target = incoming_root.joinpath(*PurePosixPath(path).parts)
+        write_archive_member(archive, member, target)
+        verify_file(target, path, expected["sha256"], "staged incoming")
+
+    report = {
+        "checkpointId": manifest.get("checkpointId"),
+        "workspace": manifest.get("workspace"),
+        "destination": str(destination),
+        "added": [str(item["path"]) for item in added],
+        "identical": [str(item["path"]) for item in identical],
+        "conflicts": conflicts,
+        "incomingRoot": str(incoming_root),
+    }
+    report_path = merge_root / "merge.json"
+    report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+
+    handoff = source_root / ".agent-checkpoint" / "HANDOFF.md"
+    result = restore_result(
+        manifest,
+        destination,
+        len(expected_files),
+        handoff,
+        restore_mode="merge",
+    )
+    result.update(
+        {
+            "addedFiles": len(added),
+            "identicalFiles": len(identical),
+            "conflictedFiles": len(conflicts),
+            "mergeReport": str(report_path),
+            "incomingRoot": str(incoming_root),
+        }
+    )
+    return result
+
+
+def restore_result(
+    manifest: dict[str, object],
+    destination: Path,
+    verified_files: int,
+    handoff: Path,
+    *,
+    restore_mode: str,
+) -> dict[str, object]:
     return {
         "checkpointId": manifest.get("checkpointId"),
         "workspace": manifest.get("workspace"),
         "destination": str(destination),
-        "verifiedFiles": len(expected_files),
-        "handoff": str(destination / ".agent-checkpoint" / "HANDOFF.md"),
+        "verifiedFiles": verified_files,
+        "handoff": str(handoff),
         "treeHash": manifest.get("treeHash"),
+        "restoreMode": restore_mode,
     }
+
+
+def require_safe_directory(destination: Path, path: Path) -> None:
+    blocked_by = unsafe_existing_parent(destination, path)
+    if blocked_by is not None:
+        raise SystemExit(f"Unsafe merge metadata path: {blocked_by}")
+    if path.is_symlink() or (path.exists() and not path.is_dir()):
+        raise SystemExit(f"Unsafe merge metadata directory: {path}")
+
+
+def unsafe_existing_parent(destination: Path, parent: Path) -> Path | None:
+    relative = parent.relative_to(destination)
+    current = destination
+    for part in relative.parts:
+        current /= part
+        if current.is_symlink() or (current.exists() and not current.is_dir()):
+            return current
+    return None
+
+
+def write_archive_member(
+    archive: tarfile.TarFile,
+    member: tarfile.TarInfo,
+    target: Path,
+) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    source = archive.extractfile(member)
+    if source is None:
+        raise SystemExit(f"Archive member is unreadable: {member.name}")
+    try:
+        with target.open("xb") as output:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                output.write(chunk)
+        os.chmod(target, member.mode & 0o777)
+    except OSError as error:
+        raise SystemExit(f"Could not write restored file {target}: {error}") from error
+
+
+def verify_file(
+    target: Path,
+    path: object,
+    checksum: object,
+    action: str,
+) -> None:
+    if not target.is_file():
+        raise SystemExit(f"Missing {action} file: {path}")
+    if f"sha256:{sha256_file(target)}" != normalize_checksum(str(checksum)):
+        raise SystemExit(f"{action.capitalize()} file hash mismatch: {path}")
+
+
+def validate_archive_tree(members: list[tarfile.TarInfo]) -> None:
+    file_names = {
+        validate_member_name(member.name) for member in members if member.isfile()
+    }
+    for member in members:
+        name = validate_member_name(member.name)
+        pure = PurePosixPath(name)
+        for parent in pure.parents:
+            normalized = parent.as_posix()
+            if normalized == ".":
+                break
+            if normalized in file_names:
+                raise SystemExit(
+                    f"Archive file blocks a child path: {normalized}"
+                )
 
 
 def validate_member_name(name: str) -> str:

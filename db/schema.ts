@@ -16,6 +16,15 @@ export const checkpoints = sqliteTable(
     workspaceName: text("workspace_name").notNull(),
     label: text("label").notNull(),
     sourceAgent: text("source_agent").notNull(),
+    agentName: text("agent_name").notNull().default("Mysterious Marmot"),
+    agentDescription: text("agent_description")
+      .notNull()
+      .default(
+        "A privacy-minded helper that summarized progress and prepared an encrypted workspace handoff.",
+      ),
+    agentMetadataMode: text("agent_metadata_mode")
+      .notNull()
+      .default("pseudonymous"),
     status: text("status").notNull().default("ready"),
     createdAt: text("created_at").notNull(),
     sizeBytes: integer("size_bytes").notNull(),

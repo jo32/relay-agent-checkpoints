@@ -1,19 +1,19 @@
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
 import { getCurrentPrincipal } from "../lib/principal";
+import { RelayLanding } from "./relay-landing";
 import RelayDashboard from "./relay-dashboard";
 
 export const metadata: Metadata = {
-  title: { absolute: "Relay — Private agent checkpoints" },
+  title: { absolute: "Relay — Install now. Back up when you’re ready." },
   description:
-    "Store, share, and restore workspace checkpoints encrypted with a user-managed key.",
+    "Install Relay's checkpoint skills without an account. Sign in only when you're ready to create a private encrypted backup.",
 };
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
   const principal = await getCurrentPrincipal();
-  if (!principal) redirect("/sign-in");
+  if (!principal) return <RelayLanding />;
 
   return (
     <RelayDashboard

@@ -13,6 +13,12 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from agent_metadata import (
+    AGENT_METADATA_MODES,
+    AgentMetadataError,
+    resolve_agent_metadata,
+    save_agent_metadata,
+)
 from checkpoint_lib import (
     FORMAT_VERSION,
     json_bytes,
@@ -38,6 +44,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--handoff-file", type=Path)
     parser.add_argument("--parent")
     parser.add_argument("--source-agent", default=os.environ.get("RELAY_SOURCE_AGENT", "Agent skill"))
+    parser.add_argument(
+        "--agent-metadata",
+        choices=AGENT_METADATA_MODES,
+        default="pseudonymous",
+        help="Share approved agent metadata or use a privacy-safe pseudonym",
+    )
+    parser.add_argument("--agent-name")
+    parser.add_argument("--agent-description")
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--write-gitignore", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -100,6 +114,15 @@ def main() -> int:
         if args.handoff_file
         else "Continue from this checkpoint. Inspect repository instructions and validation state before editing."
     )
+    try:
+        agent_metadata = resolve_agent_metadata(
+            checkpoint_id=checkpoint_id,
+            mode=args.agent_metadata,
+            name=args.agent_name,
+            description=args.agent_description,
+        )
+    except AgentMetadataError as error:
+        raise SystemExit(str(error)) from error
     manifest = {
         "formatVersion": FORMAT_VERSION,
         "checkpointId": checkpoint_id,
@@ -167,6 +190,8 @@ def main() -> int:
         "keyGenerated": False,
         "keyStored": False,
         "keyFile": None,
+        "agent": agent_metadata,
+        "agentMetadataFile": None,
         "dryRun": args.dry_run,
         "uploaded": False,
         "exclusions": [{"path": item.path, "reason": item.reason} for item in excluded],
@@ -244,6 +269,15 @@ def main() -> int:
         sidecar.write_text(f"{archive_hash}  {archive_path.name}\n", encoding="utf-8")
         summary["archiveSha256"] = f"sha256:{archive_hash}"
         summary["sidecar"] = str(sidecar)
+        try:
+            metadata_sidecar = save_agent_metadata(
+                archive_path,
+                checkpoint_id,
+                agent_metadata,
+            )
+        except AgentMetadataError as error:
+            raise SystemExit(str(error)) from error
+        summary["agentMetadataFile"] = str(metadata_sidecar)
         if args.upload:
             try:
                 upload_result = upload_checkpoint(
@@ -252,6 +286,7 @@ def main() -> int:
                     api_token=upload_token,
                     checkpoint_id=checkpoint_id,
                     checksum=summary["archiveSha256"],
+                    agent_metadata=agent_metadata,
                 )
             except (OSError, RelayUploadError) as error:
                 raise SystemExit(str(error)) from error
@@ -267,6 +302,10 @@ def main() -> int:
         if not args.dry_run:
             print(f"Archive: {archive_path}")
             print(f"Checksum: {summary['archiveSha256']}")
+            print(
+                f"Agent metadata: {agent_metadata['name']} "
+                f"({agent_metadata['mode']}) — {agent_metadata['description']}"
+            )
             if summary["keyStored"]:
                 print(f"Recovery key: generated and saved to {summary['keyFile']}")
                 print("Keep the recovery key file private and backed up separately.")

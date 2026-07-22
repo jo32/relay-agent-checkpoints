@@ -52,7 +52,7 @@ test("server-renders the Relay product shell", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>Relay — Private agent checkpoints<\/title>/i);
+  assert.match(html, /<title>Relay — Install now\. Back up when you’re ready\.<\/title>/i);
   assert.match(html, /Workspace continuity/);
   assert.match(html, /Connect skills/);
   assert.match(html, /Checkpoint registry/);
@@ -89,18 +89,54 @@ test("uses ChatGPT as the only interactive sign-in provider", async () => {
   assert.doesNotMatch(authSources, /Google|GitHub|signIn\.social/);
 });
 
+test("keeps skill installation public and gates only private backups", async () => {
+  const pageSource = await readFile(
+    new URL("../app/page.tsx", import.meta.url),
+    "utf8",
+  );
+  const landingSource = await readFile(
+    new URL("../app/relay-landing.tsx", import.meta.url),
+    "utf8",
+  );
+  const principalSource = await readFile(
+    new URL("../lib/principal.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(pageSource, /if \(!principal\) return <RelayLanding \/>/);
+  assert.doesNotMatch(pageSource, /redirect\("\/sign-in"\)/);
+  assert.match(landingSource, /No account required to start/);
+  assert.match(landingSource, /Copy install prompt/);
+  assert.match(landingSource, /relay-checkpoint-skills\.zip/);
+  assert.match(landingSource, /Sign-in starts only when you ask to back up/);
+  assert.match(landingSource, /Approve once &amp; back up/);
+  assert.match(landingSource, /Do not sign in, connect an account/);
+  assert.match(landingSource, /playful pseudonym/);
+  assert.match(landingSource, /chosen agent profile/);
+  assert.match(principalSource, /if \(!chatGPTUser && !useLocalPreview\) return null/);
+  assert.ok(
+    principalSource.indexOf("return null") <
+      principalSource.indexOf("await prepareRelayStorage()"),
+    "anonymous landing page should not depend on private checkpoint storage",
+  );
+});
+
 test("agent-operated skill prompts are copy-ready", async () => {
   const source = await readFile(
     new URL("../app/relay-dashboard.tsx", import.meta.url),
     "utf8",
   );
-  assert.match(source, /Set up Relay's checkpoint skills in this project and connect this agent/);
+  assert.match(source, /Install Relay's checkpoint skills in this project\. No Relay sign-in is needed for installation/);
   assert.match(source, /relay-checkpoint-skills\.zip/);
   assert.match(source, /skillChecksumUrl = `\$\{skillBundleUrl\}\.sha256`/);
-  assert.match(source, /Use \$agent-workspace-checkpoint to connect this agent/);
+  assert.match(source, /Stop after installation\. Do not sign in, connect an account/);
   assert.match(source, /Use \$agent-workspace-checkpoint to create and upload/);
   assert.match(source, /Use \$restore-agent-workspace to download Relay checkpoint/);
-  assert.match(source, /Do not ask me to run commands or provide an API key/);
+  assert.match(source, /ask whether I want to merge it into the current agent workspace/);
+  assert.match(source, /Do not default to either mode/);
+  assert.match(source, /Run all commands yourself/);
+  assert.match(source, /one-sentence summary of what this agent did/);
+  assert.match(source, /playful pseudonym/);
   assert.doesNotMatch(source, /Download bundle|Device sign-in|Creation skill|Restore skill/);
   assert.doesNotMatch(source, /href=\{`\/api\/checkpoints\/\$\{checkpoint\.id\}\/download`\}/);
 });
@@ -213,12 +249,20 @@ test("device authorization issues and revokes a scoped agent credential", async 
       encryptionVersion: 2,
       cipher: "AES-256-GCM",
       sizeBytes: encryptedArchive.length,
+      agentName: "Release Gardener",
+      agentDescription: "Hardened checkpoint uploads and verified the encrypted handoff.",
+      agentMetadataMode: "shared",
     }),
   });
   assert.equal(initializeResponse.status, 201);
   const initialized = await initializeResponse.json();
   assert.equal(initialized.chunkSize, 1024 * 1024);
   assert.equal(initialized.partCount, 3);
+  assert.deepEqual(initialized.agent, {
+    name: "Release Gardener",
+    description: "Hardened checkpoint uploads and verified the encrypted handoff.",
+    mode: "shared",
+  });
 
   for (let partNumber = 1; partNumber <= initialized.partCount; partNumber += 1) {
     const start = (partNumber - 1) * initialized.chunkSize;
@@ -254,6 +298,8 @@ test("device authorization issues and revokes a scoped agent credential", async 
   const completed = await completeResponse.json();
   assert.equal(completed.checkpoint.id, checkpointId);
   assert.equal(completed.checkpoint.checksum, archiveChecksum);
+  assert.equal(completed.checkpoint.agentName, "Release Gardener");
+  assert.equal(completed.checkpoint.agentMetadataMode, "shared");
 
   const metadataResponse = await fetch(`${origin}/api/checkpoints/${checkpointId}`, {
     headers: { authorization: `Bearer ${token.access_token}` },
@@ -262,6 +308,21 @@ test("device authorization issues and revokes a scoped agent credential", async 
   const metadata = await metadataResponse.json();
   assert.equal(metadata.checkpoint.sizeBytes, encryptedArchive.length);
   assert.equal(metadata.checkpoint.checksum, archiveChecksum);
+  assert.equal(metadata.checkpoint.agentName, "Release Gardener");
+  assert.equal(
+    metadata.checkpoint.agentDescription,
+    "Hardened checkpoint uploads and verified the encrypted handoff.",
+  );
+  assert.equal(metadata.checkpoint.agentMetadataMode, "shared");
+
+  const listResponse = await fetch(`${origin}/api/checkpoints`, {
+    headers: { authorization: `Bearer ${token.access_token}` },
+  });
+  assert.equal(listResponse.status, 200);
+  const listed = await listResponse.json();
+  const listedCheckpoint = listed.checkpoints.find((item) => item.id === checkpointId);
+  assert.equal(listedCheckpoint.agentName, "Release Gardener");
+  assert.equal(listedCheckpoint.agentMetadataMode, "shared");
 
   const downloadResponse = await fetch(
     `${origin}/api/checkpoints/${checkpointId}/download`,
@@ -271,6 +332,11 @@ test("device authorization issues and revokes a scoped agent credential", async 
   const downloaded = Buffer.from(await downloadResponse.arrayBuffer());
   assert.deepEqual(downloaded, encryptedArchive);
   assert.equal(downloadResponse.headers.get("x-checkpoint-sha256"), archiveChecksum);
+  assert.equal(
+    decodeURIComponent(downloadResponse.headers.get("x-relay-agent-name")),
+    "Release Gardener",
+  );
+  assert.equal(downloadResponse.headers.get("x-relay-agent-metadata-mode"), "shared");
 
   const revokeResponse = await fetch(`${origin}/api/device/revoke`, {
     method: "POST",

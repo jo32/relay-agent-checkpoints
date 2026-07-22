@@ -12,6 +12,10 @@ import {
   hasValidEncryptedHeader,
   MAX_ENCRYPTED_HEADER_BYTES,
 } from "../../../lib/encrypted-checkpoint";
+import {
+  AgentMetadataError,
+  resolveAgentMetadata,
+} from "../../../lib/agent-metadata";
 
 export const dynamic = "force-dynamic";
 
@@ -60,6 +64,19 @@ export async function POST(request: NextRequest) {
   const checksum = cleanText(form.get("checksum"), 100);
   const encryptionVersion = cleanInteger(form.get("encryptionVersion"));
   const cipher = cleanText(form.get("cipher"), 40);
+  let agentMetadata;
+  try {
+    agentMetadata = resolveAgentMetadata(requestedId, {
+      agentName: form.get("agentName"),
+      agentDescription: form.get("agentDescription"),
+      agentMetadataMode: form.get("agentMetadataMode"),
+    });
+  } catch (error) {
+    if (error instanceof AgentMetadataError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    throw error;
+  }
 
   if (!(archive instanceof File) || archive.size === 0) {
     return NextResponse.json({ error: "A checkpoint archive is required." }, { status: 400 });
@@ -134,6 +151,7 @@ export async function POST(request: NextRequest) {
       workspaceName: "Private workspace",
       label: "Encrypted checkpoint",
       sourceAgent: "Local checkpoint skill",
+      ...agentMetadata,
       status: "ready",
       createdAt,
       sizeBytes: archive.size,
@@ -162,6 +180,7 @@ export async function POST(request: NextRequest) {
         workspaceName: "Private workspace",
         label: "Encrypted checkpoint",
         sourceAgent: "Local checkpoint skill",
+        ...agentMetadata,
         status: "ready",
         createdAt,
         sizeBytes: archive.size,

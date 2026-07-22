@@ -33,19 +33,17 @@ export default async function SignInPage({
         </Link>
 
         <div className="auth-heading">
-          <span className="eyebrow">Secure workspace registry</span>
-          <h1 id="sign-in-title">Continue your work anywhere.</h1>
+          <span className="eyebrow">Your private backup vault</span>
+          <h1 id="sign-in-title">Pick up where you left off.</h1>
           <p>
-            Sign in to store, share, and restore sanitized agent workspace
-            checkpoints.
+            Sign in when you&rsquo;re ready to back up, share, or restore an
+            encrypted agent workspace. Installing the skills never requires an account.
           </p>
         </div>
 
         <SignInButtons callbackURL={returnTo} />
 
-        <p className="auth-legal">
-          Share links never contain your encryption key.
-        </p>
+        <p className="auth-legal">Relay never stores your encryption key.</p>
       </section>
     </main>
   );
