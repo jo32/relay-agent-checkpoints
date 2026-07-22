@@ -13,7 +13,7 @@ The user can ask the skill to generate a recovery key or supply a key of at leas
 
 Relay publishes a reproducible bundle at `/skills/relay-checkpoint-skills.zip` with its checksum at `/skills/relay-checkpoint-skills.zip.sha256`. The public landing page provides a copy-ready prompt that requires checksum verification and archive inspection before installing only the two Relay skill folders. Installation does not require a Relay account or agent credential.
 
-When the user first asks to create, upload, download, or restore a checkpoint, Relay connects the command-line agent with a device-style authorization flow. The skill opens the one-time approval page exactly once, the signed-in user approves the named agent, and the skill receives a 90-day revocable access credential. It then verifies that credential through `/api/agent/status`; it does not open the dashboard after authorization. Relay stores only the credential hash. The credential is not the archive encryption key; the separate encryption key remains local and is never sent to Relay.
+Creating an encrypted checkpoint locally does not require login. Before the user uploads, privately downloads, or restores a Relay checkpoint, Relay connects the command-line agent with a device-style authorization flow. The skill opens the one-time approval page exactly once, the signed-in user approves the named agent, and the skill receives a 90-day revocable access credential. It then verifies that credential through `/api/agent/status`; it does not open the dashboard after authorization. Relay stores only the credential hash. The credential is not the archive encryption key; the separate encryption key remains local and is never sent to Relay.
 
 ## Product workflow
 

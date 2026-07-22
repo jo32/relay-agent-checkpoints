@@ -36,8 +36,8 @@ export default async function SignInPage({
           <span className="eyebrow">Your private backup vault</span>
           <h1 id="sign-in-title">Pick up where you left off.</h1>
           <p>
-            Sign in when you&rsquo;re ready to back up, share, or restore an
-            encrypted agent workspace. Installing the skills never requires an account.
+            Sign in to upload, share, or restore an encrypted agent workspace.
+            Installing the skills never requires an account.
           </p>
         </div>
 

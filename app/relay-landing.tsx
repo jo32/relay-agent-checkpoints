@@ -80,17 +80,16 @@ export function RelayLanding() {
           <div className="hero-copy">
             <p className="landing-kicker">
               <Sparkles size={14} aria-hidden="true" />
-              No account required to start
+              Install without an account
             </p>
             <h1 id="landing-title">
-              Install now.
-              <span>Back up when you&rsquo;re ready.</span>
+              Install without login.
+              <span>Sign in to upload.</span>
             </h1>
             <p className="hero-lede">
               Give your agent one prompt to install Relay&rsquo;s checkpoint
-              skills. There&rsquo;s no sign-in wall. When you ask for your first
-              encrypted backup, Relay opens one approval step and takes it from
-              there.
+              skills with no account. Creating the encrypted checkpoint stays
+              local; uploading it to Relay requires a one-time sign-in approval.
             </p>
 
             <div className="hero-actions">
@@ -161,8 +160,8 @@ export function RelayLanding() {
                 <div className="ready-strip">
                   <span className="ready-pulse" aria-hidden="true" />
                   <div>
-                    <strong>Ready — no account connected</strong>
-                    <small>Sign-in starts only when you ask to back up.</small>
+                    <strong>Installed — upload not connected</strong>
+                    <small>Sign-in is required before the first upload.</small>
                   </div>
                 </div>
               </div>
@@ -196,17 +195,17 @@ export function RelayLanding() {
           </div>
           <div>
             <Cloud size={15} />
-            <span><strong>Private backup</strong> — ciphertext + chosen agent profile</span>
+            <span><strong>Private upload</strong> — login required</span>
           </div>
         </section>
 
         <section className="how-section" id="how-it-works" aria-labelledby="how-title">
           <div className="section-heading">
             <p className="landing-kicker">From zero to safely backed up</p>
-            <h2 id="how-title">Three small steps. One clear sign-in moment.</h2>
+            <h2 id="how-title">Install freely. Sign in before anything uploads.</h2>
             <p>
               Install first and keep working. Relay asks who you are only when
-              it needs to save or retrieve something private for you.
+              you upload or retrieve a private checkpoint.
             </p>
           </div>
 
@@ -225,24 +224,25 @@ export function RelayLanding() {
             <article className="journey-card ask-card">
               <div className="journey-number">02</div>
               <span className="journey-icon"><SquareTerminal size={19} /></span>
-              <p className="journey-status local">In your agent</p>
-              <h3>Ask for a backup</h3>
+              <p className="journey-status local">Still local</p>
+              <h3>Create the checkpoint</h3>
               <p>
                 Say: &ldquo;Create an encrypted Relay checkpoint of this
                 project.&rdquo; The skill prepares a safe local archive and asks
                 whether to share an agent summary or use a playful pseudonym.
+                Nothing has uploaded yet.
               </p>
             </article>
 
             <article className="journey-card approve-card">
               <div className="journey-number">03</div>
               <span className="journey-icon"><ShieldCheck size={19} /></span>
-              <p className="journey-status once">Sign in here</p>
-              <h3>Approve once &amp; back up</h3>
+              <p className="journey-status once">Login required</p>
+              <h3>Sign in, then upload</h3>
               <p>
-                If you&rsquo;re not connected, your agent opens one short-code
-                approval. Then it uploads encrypted workspace data with the
-                agent profile you approved or pseudonymized.
+                Your agent must open a short-code approval if you&rsquo;re not
+                connected. Only after approval does it upload encrypted workspace
+                data with the agent profile you approved or pseudonymized.
               </p>
             </article>
           </div>
@@ -250,16 +250,16 @@ export function RelayLanding() {
 
         <section className="first-backup-section" aria-labelledby="backup-title">
           <div className="backup-copy">
-            <p className="landing-kicker">Your first backup</p>
-            <h2 id="backup-title">Not signed in? You don&rsquo;t need to prepare anything.</h2>
+            <p className="landing-kicker">Your first upload</p>
+            <h2 id="backup-title">Not signed in? Relay pauses before upload.</h2>
             <p>
               The checkpoint skill notices the missing connection and guides the
-              whole flow. You approve the matching code in your browser; the
-              agent finishes the backup without asking for API keys or terminal
-              commands.
+              whole flow. You approve the matching code in your browser; only
+              then can the agent upload the encrypted checkpoint. It never asks
+              you for API keys or terminal commands.
             </p>
             <div className="backup-facts">
-              <span><Check size={14} /> One browser approval</span>
+              <span><Check size={14} /> Login required to upload</span>
               <span><Check size={14} /> 90-day revocable connection</span>
               <span><Check size={14} /> Recovery key stays local</span>
               <span><Check size={14} /> Agent profile is your choice</span>
@@ -273,19 +273,19 @@ export function RelayLanding() {
               <span>agent conversation</span>
             </div>
             <div className="backup-message user">
-              Back up this project with Relay.
+              Upload this encrypted checkpoint to Relay.
             </div>
             <div className="backup-message agent">
               <span className="mini-mark"><SquareTerminal size={13} /></span>
               <div>
-                <p>You&rsquo;re not connected yet. I opened Relay once.</p>
+                <p>Sign-in is required before I can upload. I opened Relay once.</p>
                 <strong>Approve code &nbsp; R8LY-K2QP</strong>
               </div>
             </div>
             <div className="backup-complete">
               <ShieldCheck size={16} />
               <div>
-                <strong>Encrypted checkpoint saved</strong>
+                <strong>Signed in · encrypted checkpoint uploaded</strong>
                 <span>Ciphertext + your chosen agent profile</span>
               </div>
             </div>
@@ -325,8 +325,8 @@ export function RelayLanding() {
         <section className="landing-cta" aria-labelledby="cta-title">
           <div>
             <p className="landing-kicker">Ready when you are</p>
-            <h2 id="cta-title">Install Relay before you need the handoff.</h2>
-            <p>No account. No setup maze. Just one prompt your agent can handle.</p>
+            <h2 id="cta-title">Install now. Sign in when you upload.</h2>
+            <p>No account for installation. Relay login is required for cloud uploads.</p>
           </div>
           <div className="cta-actions">
             <button

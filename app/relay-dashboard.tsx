@@ -1008,7 +1008,7 @@ If the Relay credential is missing or expired, let the skill open the approval p
             <Database size={17} />
             <p>
               Installation is public and needs no account. When you later ask
-              for a backup or restore, the skill starts the one-time browser
+              to upload or restore, the skill starts the required browser
               approval if needed. The separate encryption key stays local, and
               agent metadata is shared only with approval or replaced by a playful alias.
             </p>

@@ -52,7 +52,7 @@ test("server-renders the Relay product shell", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>Relay — Install now\. Back up when you’re ready\.<\/title>/i);
+  assert.match(html, /<title>Relay — Install without login\. Sign in to upload\.<\/title>/i);
   assert.match(html, /Workspace continuity/);
   assert.match(html, /Connect skills/);
   assert.match(html, /Checkpoint registry/);
@@ -105,11 +105,12 @@ test("keeps skill installation public and gates only private backups", async () 
 
   assert.match(pageSource, /if \(!principal\) return <RelayLanding \/>/);
   assert.doesNotMatch(pageSource, /redirect\("\/sign-in"\)/);
-  assert.match(landingSource, /No account required to start/);
+  assert.match(landingSource, /Install without an account/);
   assert.match(landingSource, /Copy install prompt/);
   assert.match(landingSource, /relay-checkpoint-skills\.zip/);
-  assert.match(landingSource, /Sign-in starts only when you ask to back up/);
-  assert.match(landingSource, /Approve once &amp; back up/);
+  assert.match(landingSource, /Sign-in is required before the first upload/);
+  assert.match(landingSource, /Login required/);
+  assert.match(landingSource, /Only after approval does it upload/);
   assert.match(landingSource, /Do not sign in, connect an account/);
   assert.match(landingSource, /playful pseudonym/);
   assert.match(landingSource, /chosen agent profile/);

@@ -4,9 +4,9 @@ import { RelayLanding } from "./relay-landing";
 import RelayDashboard from "./relay-dashboard";
 
 export const metadata: Metadata = {
-  title: { absolute: "Relay — Install now. Back up when you’re ready." },
+  title: { absolute: "Relay — Install without login. Sign in to upload." },
   description:
-    "Install Relay's checkpoint skills without an account. Sign in only when you're ready to create a private encrypted backup.",
+    "Install Relay's checkpoint skills without an account. Sign in is required before uploading a private encrypted checkpoint.",
 };
 
 export const dynamic = "force-dynamic";
