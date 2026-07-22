@@ -12,36 +12,36 @@ export async function generateMetadata(): Promise<Metadata> {
   const protocol =
     forwardedProtocol ?? (host?.startsWith("localhost") ? "http" : "https");
   const origin = host ? `${protocol}://${host}` : "http://localhost:3000";
-  const socialImage = new URL("/og-vercel-style.png", origin).toString();
+  const socialImage = new URL("/og-security.png", origin).toString();
 
   return {
     title: {
-      default: "Relay — Install without login. Sign in to upload.",
+      default: "Relay — Encrypted checkpoints for agent workspaces.",
       template: "%s · Relay",
     },
     description:
-      "Install Relay's checkpoint skills without an account. Sign in is required before uploading a private encrypted checkpoint.",
+      "Capture, encrypt, and restore AI agent workspaces without exposing source files, workspace context, or recovery keys to Relay.",
     icons: {
       icon: "/favicon.svg",
       shortcut: "/favicon.svg",
     },
     openGraph: {
-      title: "Relay — Install without login. Sign in to upload.",
-      description: "Install the skills without an account. Relay login is required before upload.",
+      title: "Relay — Encrypted checkpoints for agent workspaces.",
+      description: "Locally encrypted, zero-knowledge checkpoints with verified restore.",
       type: "website",
       images: [
         {
           url: socialImage,
           width: 1536,
           height: 1024,
-          alt: "Relay — install checkpoint skills without login and sign in to upload",
+          alt: "Relay — locally encrypted checkpoints for agent workspaces",
         },
       ],
     },
     twitter: {
       card: "summary_large_image",
-      title: "Relay — Install without login. Sign in to upload.",
-      description: "Install the skills without an account. Relay login is required before upload.",
+      title: "Relay — Encrypted checkpoints for agent workspaces.",
+      description: "Locally encrypted, zero-knowledge checkpoints with verified restore.",
       images: [socialImage],
     },
   };

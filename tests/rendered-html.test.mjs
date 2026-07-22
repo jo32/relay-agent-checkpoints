@@ -52,7 +52,7 @@ test("server-renders the Relay product shell", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>Relay — Install without login\. Sign in to upload\.<\/title>/i);
+  assert.match(html, /<title>Relay — Encrypted checkpoints for agent workspaces\.<\/title>/i);
   assert.match(html, /Workspace continuity/);
   assert.match(html, /Connect skills/);
   assert.match(html, /Checkpoint registry/);
@@ -89,7 +89,7 @@ test("uses ChatGPT as the only interactive sign-in provider", async () => {
   assert.doesNotMatch(authSources, /Google|GitHub|signIn\.social/);
 });
 
-test("keeps skill installation public and gates only private backups", async () => {
+test("leads with Relay's zero-knowledge checkpoint security", async () => {
   const pageSource = await readFile(
     new URL("../app/page.tsx", import.meta.url),
     "utf8",
@@ -105,14 +105,18 @@ test("keeps skill installation public and gates only private backups", async () 
 
   assert.match(pageSource, /if \(!principal\) return <RelayLanding \/>/);
   assert.doesNotMatch(pageSource, /redirect\("\/sign-in"\)/);
-  assert.match(landingSource, /Install without an account/);
-  assert.match(landingSource, /Copy install prompt/);
+  assert.match(landingSource, /Secure workspace continuity/);
+  assert.match(landingSource, /Encrypted checkpoints/);
+  assert.match(landingSource, /for agent workspaces/);
+  assert.match(landingSource, /Install Relay skills/);
   assert.match(landingSource, /relay-checkpoint-skills\.zip/);
-  assert.match(landingSource, /Sign-in is required before the first upload/);
-  assert.match(landingSource, /Login required/);
-  assert.match(landingSource, /Only after approval does it upload/);
+  assert.match(landingSource, /Relay stores ciphertext, never plaintext/);
+  assert.match(landingSource, /AES-256-GCM/);
+  assert.match(landingSource, /Recovery key stays local/);
+  assert.match(landingSource, /Restore with proof/);
+  assert.doesNotMatch(landingSource, /Install without login|Sign in to upload|Login required/);
   assert.match(landingSource, /Do not sign in, connect an account/);
-  assert.match(landingSource, /playful pseudonym/);
+  assert.match(landingSource, /privacy-safe pseudonym/);
   assert.match(landingSource, /chosen agent profile/);
   assert.match(principalSource, /if \(!chatGPTUser && !useLocalPreview\) return null/);
   assert.ok(

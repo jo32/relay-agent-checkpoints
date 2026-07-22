@@ -3,20 +3,18 @@
 import {
   ArrowRight,
   Check,
-  Cloud,
   Copy,
   Download,
   KeyRound,
   Laptop,
   LockKeyhole,
   ShieldCheck,
-  Sparkles,
   SquareTerminal,
 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
-const INSTALL_PROMPT_LABEL = "Install Relay's checkpoint skills in this project.";
+const INSTALL_PROMPT_LABEL = "Create a secure Relay checkpoint of this workspace.";
 
 function installPrompt(origin: string) {
   const bundleUrl = `${origin}/skills/relay-checkpoint-skills.zip`;
@@ -70,7 +68,7 @@ export function RelayLanding() {
         </nav>
 
         <Link className="landing-vault-link" href="/sign-in?return_to=%2F">
-          Open your backups
+          Open Relay
           <ArrowRight size={15} aria-hidden="true" />
         </Link>
       </header>
@@ -79,17 +77,17 @@ export function RelayLanding() {
         <section className="landing-hero" aria-labelledby="landing-title">
           <div className="hero-copy">
             <p className="landing-kicker">
-              <Sparkles size={14} aria-hidden="true" />
-              Install without an account
+              <ShieldCheck size={14} aria-hidden="true" />
+              Secure workspace continuity
             </p>
             <h1 id="landing-title">
-              Install without login.
-              <span>Sign in to upload.</span>
+              Encrypted checkpoints
+              <span>for agent workspaces.</span>
             </h1>
             <p className="hero-lede">
-              Give your agent one prompt to install Relay&rsquo;s checkpoint
-              skills with no account. Creating the encrypted checkpoint stays
-              local; uploading it to Relay requires a one-time sign-in approval.
+              Relay lets an AI agent capture a project&rsquo;s files, context, and
+              handoff state in a locally encrypted checkpoint—then restore it in
+              another workspace without exposing the contents or recovery key to Relay.
             </p>
 
             <div className="hero-actions">
@@ -99,7 +97,7 @@ export function RelayLanding() {
                 onClick={() => void copyInstallPrompt()}
               >
                 {copied ? <Check size={17} /> : <Copy size={17} />}
-                {copied ? "Prompt copied" : "Copy install prompt"}
+                {copied ? "Prompt copied" : "Install Relay skills"}
               </button>
               <a
                 className="landing-button secondary"
@@ -113,11 +111,11 @@ export function RelayLanding() {
             <p className={`copy-feedback${copyError ? " error" : ""}`} role="status">
               {copyError
                 ? "Clipboard access is blocked. Download the bundle instead."
-                : "Paste the prompt into your agent. Installation stays local."}
+                : "Paste the prompt into your agent. Relay verifies the bundle before installation."}
             </p>
           </div>
 
-          <div className="install-visual" aria-label="Relay skill installation preview">
+          <div className="install-visual" aria-label="Relay encrypted checkpoint preview">
             <div className="install-window">
               <div className="install-window-bar">
                 <span className="window-dots" aria-hidden="true">
@@ -125,7 +123,7 @@ export function RelayLanding() {
                   <i />
                   <i />
                 </span>
-                <span>relay / skill setup</span>
+                <span>relay / secure checkpoint</span>
                 <span className="verified-badge">
                   <ShieldCheck size={12} /> verified
                 </span>
@@ -145,13 +143,13 @@ export function RelayLanding() {
                     <p className="response-label">Agent</p>
                     <ul>
                       <li>
-                        <Check size={14} /> Bundle checksum verified
+                        <Check size={14} /> Sensitive files excluded locally
                       </li>
                       <li>
-                        <Check size={14} /> 2 Relay skills installed
+                        <Check size={14} /> Workspace encrypted with AES-256-GCM
                       </li>
                       <li>
-                        <Check size={14} /> Instructions read and ready
+                        <Check size={14} /> Integrity manifest sealed
                       </li>
                     </ul>
                   </div>
@@ -160,8 +158,8 @@ export function RelayLanding() {
                 <div className="ready-strip">
                   <span className="ready-pulse" aria-hidden="true" />
                   <div>
-                    <strong>Installed — upload not connected</strong>
-                    <small>Sign-in is required before the first upload.</small>
+                    <strong>Checkpoint secured — key stays local</strong>
+                    <small>Relay stores ciphertext, never plaintext.</small>
                   </div>
                 </div>
               </div>
@@ -171,7 +169,7 @@ export function RelayLanding() {
               <Laptop size={16} />
               <span>
                 <strong>Local first</strong>
-                Skills install in your project
+                Encryption happens on your machine
               </span>
             </div>
             <div className="floating-note note-private">
@@ -186,63 +184,61 @@ export function RelayLanding() {
 
         <section className="trust-ribbon" aria-label="Relay promises">
           <div>
-            <Check size={15} />
-            <span><strong>Public install</strong> — no login</span>
+            <LockKeyhole size={15} />
+            <span><strong>AES-256-GCM</strong> — encrypted locally</span>
           </div>
           <div>
             <KeyRound size={15} />
-            <span><strong>Local encryption</strong> — your key stays put</span>
+            <span><strong>Zero knowledge</strong> — Relay never gets the key</span>
           </div>
           <div>
-            <Cloud size={15} />
-            <span><strong>Private upload</strong> — login required</span>
+            <ShieldCheck size={15} />
+            <span><strong>Verified restore</strong> — hashes and paths checked</span>
           </div>
         </section>
 
         <section className="how-section" id="how-it-works" aria-labelledby="how-title">
           <div className="section-heading">
-            <p className="landing-kicker">From zero to safely backed up</p>
-            <h2 id="how-title">Install freely. Sign in before anything uploads.</h2>
+            <p className="landing-kicker">Security from source to restore</p>
+            <h2 id="how-title">A checkpoint built to travel safely.</h2>
             <p>
-              Install first and keep working. Relay asks who you are only when
-              you upload or retrieve a private checkpoint.
+              Your agent filters the workspace, encrypts everything before it leaves
+              your machine, and proves the restored files are exactly what you saved.
             </p>
           </div>
 
           <div className="journey-grid">
             <article className="journey-card install-card">
               <div className="journey-number">01</div>
-              <span className="journey-icon"><Download size={19} /></span>
-              <p className="journey-status free">No login</p>
-              <h3>Install the skills</h3>
+              <span className="journey-icon"><SquareTerminal size={19} /></span>
+              <p className="journey-status free">On your machine</p>
+              <h3>Sanitize at the source</h3>
               <p>
-                Copy the prompt above. Your agent verifies the public bundle,
-                installs two skills, and stops there.
+                Relay&rsquo;s skill selects the workspace state and excludes secrets,
+                unsafe paths, caches, dependencies, and other disposable data.
               </p>
             </article>
 
             <article className="journey-card ask-card">
               <div className="journey-number">02</div>
-              <span className="journey-icon"><SquareTerminal size={19} /></span>
-              <p className="journey-status local">Still local</p>
-              <h3>Create the checkpoint</h3>
+              <span className="journey-icon"><LockKeyhole size={19} /></span>
+              <p className="journey-status local">Zero knowledge</p>
+              <h3>Encrypt before upload</h3>
               <p>
-                Say: &ldquo;Create an encrypted Relay checkpoint of this
-                project.&rdquo; The skill prepares a safe local archive and asks
-                whether to share an agent summary or use a playful pseudonym.
-                Nothing has uploaded yet.
+                The checkpoint is sealed locally with AES-256-GCM. The recovery
+                key stays with you; Relay receives only opaque ciphertext and
+                minimal approved metadata.
               </p>
             </article>
 
             <article className="journey-card approve-card">
               <div className="journey-number">03</div>
               <span className="journey-icon"><ShieldCheck size={19} /></span>
-              <p className="journey-status once">Login required</p>
-              <h3>Sign in, then upload</h3>
+              <p className="journey-status once">Cryptographically checked</p>
+              <h3>Restore with proof</h3>
               <p>
-                Your agent must open a short-code approval if you&rsquo;re not
-                connected. Only after approval does it upload encrypted workspace
-                data with the agent profile you approved or pseudonymized.
+                Restore decrypts on your machine, rejects unsafe paths, and verifies
+                every file hash before handing the recovered workspace to a new agent.
               </p>
             </article>
           </div>
@@ -250,43 +246,42 @@ export function RelayLanding() {
 
         <section className="first-backup-section" aria-labelledby="backup-title">
           <div className="backup-copy">
-            <p className="landing-kicker">Your first upload</p>
-            <h2 id="backup-title">Not signed in? Relay pauses before upload.</h2>
+            <p className="landing-kicker">Zero knowledge by design</p>
+            <h2 id="backup-title">Relay can store your checkpoint. It cannot read it.</h2>
             <p>
-              The checkpoint skill notices the missing connection and guides the
-              whole flow. You approve the matching code in your browser; only
-              then can the agent upload the encrypted checkpoint. It never asks
-              you for API keys or terminal commands.
+              The archive is encrypted before it leaves your workspace. Readable
+              file contents, workspace metadata, handoff notes, and the recovery key
+              never reach Relay&rsquo;s servers.
             </p>
             <div className="backup-facts">
-              <span><Check size={14} /> Login required to upload</span>
-              <span><Check size={14} /> 90-day revocable connection</span>
+              <span><Check size={14} /> AES-256-GCM encryption</span>
+              <span><Check size={14} /> Secrets excluded before packing</span>
               <span><Check size={14} /> Recovery key stays local</span>
-              <span><Check size={14} /> Agent profile is your choice</span>
+              <span><Check size={14} /> Every restored file is verified</span>
             </div>
           </div>
 
-          <div className="backup-demo" aria-label="First backup conversation example">
+          <div className="backup-demo" aria-label="Relay checkpoint security example">
             <div className="backup-demo-header">
               <span className="status-dot" />
-              First checkpoint
-              <span>agent conversation</span>
+              Checkpoint protection
+              <span>local security pipeline</span>
             </div>
             <div className="backup-message user">
-              Upload this encrypted checkpoint to Relay.
+              Create a secure checkpoint of this workspace.
             </div>
             <div className="backup-message agent">
               <span className="mini-mark"><SquareTerminal size={13} /></span>
               <div>
-                <p>Sign-in is required before I can upload. I opened Relay once.</p>
-                <strong>Approve code &nbsp; R8LY-K2QP</strong>
+                <p>Secrets excluded. Workspace encrypted locally. Recovery key saved separately.</p>
+                <strong>AES-256-GCM &nbsp; · &nbsp; manifest sealed</strong>
               </div>
             </div>
             <div className="backup-complete">
               <ShieldCheck size={16} />
               <div>
-                <strong>Signed in · encrypted checkpoint uploaded</strong>
-                <span>Ciphertext + your chosen agent profile</span>
+                <strong>Ciphertext uploaded · integrity verified</strong>
+                <span>Relay received no source files, workspace name, or recovery key</span>
               </div>
             </div>
           </div>
@@ -298,7 +293,7 @@ export function RelayLanding() {
           </div>
           <div>
             <p className="landing-kicker">Private by construction</p>
-            <h2 id="privacy-title">Relay stores the backup. Not the meaning.</h2>
+            <h2 id="privacy-title">Your workspace stays yours—even while it travels.</h2>
             <p>
               Files are selected, sanitized, and encrypted on your machine.
               Relay receives an opaque <code>.relay</code> file plus either the
@@ -324,9 +319,9 @@ export function RelayLanding() {
 
         <section className="landing-cta" aria-labelledby="cta-title">
           <div>
-            <p className="landing-kicker">Ready when you are</p>
-            <h2 id="cta-title">Install now. Sign in when you upload.</h2>
-            <p>No account for installation. Relay login is required for cloud uploads.</p>
+            <p className="landing-kicker">Protect the next handoff</p>
+            <h2 id="cta-title">Give your agent a secure place to resume.</h2>
+            <p>Install Relay, create a locally encrypted checkpoint, and restore it with cryptographic verification.</p>
           </div>
           <div className="cta-actions">
             <button
@@ -335,10 +330,10 @@ export function RelayLanding() {
               onClick={() => void copyInstallPrompt()}
             >
               {copied ? <Check size={17} /> : <Copy size={17} />}
-              {copied ? "Prompt copied" : "Copy install prompt"}
+              {copied ? "Prompt copied" : "Install Relay skills"}
             </button>
             <Link className="cta-text-link" href="/sign-in?return_to=%2F">
-              I already use Relay <ArrowRight size={15} />
+              Open checkpoint registry <ArrowRight size={15} />
             </Link>
           </div>
         </section>
@@ -352,7 +347,7 @@ export function RelayLanding() {
         <p>Pause here. Continue anywhere.</p>
         <div>
           <a href="/skills/relay-checkpoint-skills.zip.sha256">Bundle checksum</a>
-          <Link href="/sign-in?return_to=%2F">Sign in</Link>
+          <Link href="/sign-in?return_to=%2F">Open Relay</Link>
         </div>
       </footer>
     </div>
