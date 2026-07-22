@@ -12,7 +12,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const protocol =
     forwardedProtocol ?? (host?.startsWith("localhost") ? "http" : "https");
   const origin = host ? `${protocol}://${host}` : "http://localhost:3000";
-  const socialImage = new URL("/og-install-upload-login.png", origin).toString();
+  const socialImage = new URL("/og-vercel-style.png", origin).toString();
 
   return {
     title: {
