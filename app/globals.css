@@ -2641,6 +2641,10 @@ kbd {
   flex-direction: column;
 }
 
+.setup-grid .step-heading {
+  height: 76px;
+}
+
 .setup-grid .code-block,
 .setup-grid .code-block pre {
   flex: 1;
@@ -3248,6 +3252,10 @@ kbd {
   .setup-grid {
     grid-template-columns: 1fr;
     gap: 0;
+  }
+
+  .setup-grid .step-heading {
+    height: auto;
   }
 
   .modal-backdrop {
