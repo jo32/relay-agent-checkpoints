@@ -89,7 +89,9 @@ function publicCheckpointArchive(
   const handoff = Buffer.from(`# ${title}\n\n${description}\n`);
   const archive = Buffer.concat([
     tarEntry("././@PaxHeader", paxRecord("path", "README.md"), "x"),
-    tarEntry("PaxPath", source),
+    // Python's tarfile uses question marks in the legacy header when a PAX
+    // path contains characters that cannot be represented there.
+    tarEntry("README??.md", source),
     ...additionalEntries.flatMap(({ name, data, pax }) =>
       pax
         ? [

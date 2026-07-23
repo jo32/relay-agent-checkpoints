@@ -183,7 +183,14 @@ class TarFramingValidator {
       if (this.zeroBlocks >= 2) this.ended = true;
       return;
     }
-    if (this.ended || this.zeroBlocks > 0 || !hasValidTarHeader(this.block)) {
+    if (
+      this.ended ||
+      this.zeroBlocks > 0 ||
+      !hasValidTarHeader(
+        this.block,
+        this.pendingPaxPath !== undefined,
+      )
+    ) {
       this.invalid = true;
       return;
     }
@@ -293,7 +300,10 @@ class TarFramingValidator {
   }
 }
 
-function hasValidTarHeader(header: Uint8Array) {
+function hasValidTarHeader(
+  header: Uint8Array,
+  hasPendingPaxPath = false,
+) {
   const recordedChecksum = parseTarOctal(header.subarray(148, 156));
   if (recordedChecksum === null) return false;
   let checksum = 0;
@@ -305,7 +315,10 @@ function hasValidTarHeader(header: Uint8Array) {
   const name = tarString(header.subarray(0, 100));
   const prefix = tarString(header.subarray(345, 500));
   const path = prefix ? `${prefix}/${name}` : name;
-  if (!isSafeTarPath(path)) return false;
+  // PAX writers such as Python's tarfile replace non-ASCII characters in the
+  // legacy header with "?" and put the authoritative UTF-8 path in the
+  // preceding extended header. The resolved PAX path is validated below.
+  if (!hasPendingPaxPath && !isSafeTarPath(path)) return false;
   const type = header[156];
   return (
     isRegularTarType(type) ||
