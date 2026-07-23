@@ -256,7 +256,7 @@ test("server-renders the Relay product shell", async () => {
   assert.match(html, /Connect skills/);
   assert.match(html, /Checkpoint registry/);
   assert.match(html, /Latest checkpoint/);
-  assert.match(html, /Private and public checkpoint registry/);
+  assert.doesNotMatch(html, /Private and public checkpoint registry/);
   assert.match(html, /Private checkpoints stay locally encrypted/);
   assert.match(html, /public checkpoints are separate, intentionally readable artifacts/i);
   assert.doesNotMatch(html, /Agent runners|Use runner|Start a handoff/);

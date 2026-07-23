@@ -1154,11 +1154,6 @@ kbd {
   gap: 12px;
 }
 
-.header-registry-label {
-  color: var(--faint);
-  font-size: 11px;
-}
-
 .header-github {
   min-height: 30px;
   display: inline-flex;
@@ -1181,7 +1176,6 @@ kbd {
   border-color: var(--border-strong);
 }
 
-.avatar,
 .agent-avatar {
   display: inline-flex;
   align-items: center;
@@ -1191,12 +1185,6 @@ kbd {
   font-family: var(--font-geist-mono), "Geist Mono", ui-monospace, monospace;
   background: #171717;
   border-radius: 50%;
-}
-
-.avatar {
-  width: 28px;
-  height: 28px;
-  font-size: 9px;
 }
 
 .mobile-nav-trigger {
@@ -2844,10 +2832,6 @@ kbd {
 
   .global-header {
     grid-template-columns: 1fr minmax(260px, 360px) auto;
-  }
-
-  .header-registry-label {
-    display: none;
   }
 
   .latest-grid {

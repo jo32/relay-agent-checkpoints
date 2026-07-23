@@ -17,7 +17,6 @@ export default async function Home() {
 
   return (
     <RelayDashboard
-      displayName={principal.displayName}
       email={principal.email}
       organizationName={principal.organizationName}
       authSource={principal.source}

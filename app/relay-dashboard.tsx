@@ -153,13 +153,11 @@ const previewCheckpoints: Checkpoint[] = [
 ];
 
 export default function RelayDashboard({
-  displayName,
   email,
   organizationName,
   authSource,
   isLocalPreview,
 }: {
-  displayName: string;
   email: string;
   organizationName: string;
   authSource: AuthSource;
@@ -262,7 +260,6 @@ export default function RelayDashboard({
   return (
     <div className="relay-shell">
       <GlobalHeader
-        displayName={displayName}
         organizationName={organizationName}
         search={search}
         searchRef={searchRef}
@@ -388,14 +385,12 @@ export default function RelayDashboard({
 }
 
 function GlobalHeader({
-  displayName,
   organizationName,
   search,
   searchRef,
   onSearch,
   onOpenNav,
 }: {
-  displayName: string;
   organizationName: string;
   search: string;
   searchRef: React.RefObject<HTMLInputElement | null>;
@@ -452,8 +447,6 @@ function GlobalHeader({
           <GitFork size={14} />
           <span>GitHub</span>
         </a>
-        <span className="header-registry-label">Private and public checkpoint registry</span>
-        <span className="avatar">{initials(displayName)}</span>
       </div>
     </header>
   );
