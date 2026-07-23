@@ -1390,6 +1390,14 @@ fs.writeFileSync(output, Buffer.concat([
             )
             self.assertTrue(published["keyStored"])
             self.assertFalse(published["keySentToRelay"])
+            self.assertEqual(
+                published["marketplaceUrl"],
+                (
+                    f"{api_url}/marketplace?q="
+                    f"{urllib.parse.quote(created['checkpointId'], safe='')}"
+                ),
+            )
+            self.assertTrue(published["relay"]["marketplace"]["indexed"])
             self.assertEqual(published["publicFiles"], ["main.py"])
             self.assertEqual(
                 published["publicManifestMetadata"]["publication"],
@@ -2174,6 +2182,9 @@ def publication_server(
                 "encryptionVersion": 2,
                 "cipher": "AES-256-GCM",
                 "visibility": "public",
+                "marketplaceUrl": (
+                    f"/marketplace?q={urllib.parse.quote(checkpoint_id, safe='')}"
+                ),
                 "publication": {
                     "title": upload["publicTitle"],
                     "description": upload["publicDescription"],

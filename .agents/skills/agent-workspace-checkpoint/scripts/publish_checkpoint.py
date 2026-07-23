@@ -177,6 +177,7 @@ def main() -> int:
                 f"{args.api_url.rstrip('/')}/api/public/checkpoints/"
                 f"{urllib.parse.quote(checkpoint_id, safe='')}/download"
             ),
+            "marketplaceUrl": uploaded["marketplace"]["url"],
             "relay": uploaded,
         }
 
@@ -186,6 +187,7 @@ def main() -> int:
         print(f"Published checkpoint: {checkpoint_id}")
         print(f"Public title: {metadata['title']}")
         print(f"Public URL: {result['publicUrl']}")
+        print(f"Marketplace: {result['marketplaceUrl']}")
         print("Recovery key: used locally and never sent to Relay.")
     return 0
 

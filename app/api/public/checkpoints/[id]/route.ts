@@ -18,6 +18,11 @@ export async function GET(
       checkpoint: {
         id: checkpoint.id,
         visibility: "public",
+        agent: {
+          name: checkpoint.agentName,
+          description: checkpoint.agentDescription,
+          metadataMode: checkpoint.agentMetadataMode,
+        },
         publication: {
           title: checkpoint.publication.title,
           description: checkpoint.publication.description,
@@ -26,6 +31,7 @@ export async function GET(
           formatVersion: checkpoint.publication.formatVersion,
           publishedAt: checkpoint.publication.publishedAt,
         },
+        marketplaceUrl: `/marketplace?q=${encodeURIComponent(checkpoint.id)}`,
       },
     },
     {

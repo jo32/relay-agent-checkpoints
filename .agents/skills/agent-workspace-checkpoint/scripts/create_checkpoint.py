@@ -11,6 +11,7 @@ import os
 import secrets
 import tarfile
 import tempfile
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -494,6 +495,12 @@ def main() -> int:
                 raise SystemExit(str(error)) from error
             summary["uploaded"] = True
             summary["relay"] = upload_result
+            if is_public:
+                summary["publicUrl"] = (
+                    f"{args.api_url.rstrip('/')}/api/public/checkpoints/"
+                    f"{urllib.parse.quote(checkpoint_id, safe='')}/download"
+                )
+                summary["marketplaceUrl"] = upload_result["marketplace"]["url"]
 
     if args.json_output:
         print(json.dumps(summary, indent=2))
@@ -524,6 +531,9 @@ def main() -> int:
                 print("Encryption key: not stored; enter the same key to restore.")
             if summary["uploaded"]:
                 print(f"Relay checkpoint: {summary['relay']['checkpoint']['id']}")
+                if is_public:
+                    print(f"Public URL: {summary['publicUrl']}")
+                    print(f"Marketplace: {summary['marketplaceUrl']}")
         if excluded:
             print("Excluded:")
             for item in excluded[:40]:

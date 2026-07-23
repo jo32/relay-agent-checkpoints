@@ -154,6 +154,7 @@ def upload_checkpoint(
             raise RelayUploadError("Relay API could not verify the stored checkpoint")
         if public:
             publication = verified_checkpoint.get("publication")
+            marketplace_path = verified_checkpoint.get("marketplaceUrl")
             if (
                 verified_checkpoint.get("visibility") != "public"
                 or not isinstance(publication, dict)
@@ -170,10 +171,19 @@ def upload_checkpoint(
                     ).lower()
                     != str(source_ciphertext_checksum).lower()
                 )
+                or not isinstance(marketplace_path, str)
+                or not marketplace_path.startswith("/marketplace?")
             ):
                 raise RelayUploadError(
                     "Relay API could not verify the public checkpoint"
                 )
+            completed["marketplace"] = {
+                "indexed": True,
+                "url": urllib.parse.urljoin(
+                    f"{endpoint}/",
+                    marketplace_path.lstrip("/"),
+                ),
+            }
         elif (
             str(verified_checkpoint.get("checksum", "")).lower()
             != checksum.lower()

@@ -57,6 +57,37 @@ export type CheckpointRecord = StoredCheckpointRecord & {
   publication: CheckpointPublicationMetadata | null;
 };
 
+export type MarketplaceSort = "recommended" | "latest";
+
+export type MarketplaceCheckpoint = {
+  id: string;
+  title: string;
+  description: string;
+  agent: {
+    name: string;
+    description: string;
+    metadataMode: AgentMetadataMode;
+  };
+  sizeBytes: number;
+  formatVersion: number;
+  publishedAt: string;
+  downloadUrl: string;
+  metadataUrl: string;
+  marketplaceUrl: string;
+};
+
+type RawMarketplaceCheckpoint = {
+  id: string;
+  publicTitle: string;
+  publicDescription: string;
+  agentName: string;
+  agentDescription: string;
+  agentMetadataMode: AgentMetadataMode;
+  sizeBytes: number;
+  formatVersion: number;
+  publishedAt: string;
+};
+
 type RawPublicationColumns = {
   publicationCheckpointId: string | null;
   publicationTenantId: string | null;
@@ -184,6 +215,7 @@ export async function insertPublicCheckpoint(
   await DB.batch([
     checkpointInsertStatement(DB, checkpoint),
     publicationInsertStatement(DB, publication),
+    marketplaceIndexInsertStatement(DB, checkpoint, publication),
   ]);
 }
 
@@ -206,7 +238,7 @@ export async function insertPublicationForExistingCheckpoint(
   }
   const { DB } = getRuntimeEnv();
   await ensureCheckpointSchema(DB);
-  const inserted = await DB.prepare(
+  const publicationInsert = DB.prepare(
     `INSERT INTO checkpoint_publications (
       checkpoint_id, tenant_id, object_key, checksum, size_bytes,
       format_version, source_ciphertext_checksum, public_title,
@@ -239,8 +271,11 @@ export async function insertPublicationForExistingCheckpoint(
       publication.tenantId,
       publication.publishedByUserId,
       publication.sourceCiphertextChecksum,
-    )
-    .run();
+    );
+  const [inserted] = await DB.batch([
+    publicationInsert,
+    marketplaceIndexFromPublicationStatement(DB, publication.checkpointId),
+  ]);
   if (inserted.meta.changes > 0) return "created";
 
   const existingPublication = await findCheckpointPublication(
@@ -358,6 +393,92 @@ export async function findPublicCheckpoint(id: string) {
     .bind(id)
     .first<RawCheckpointRecord>();
   return row ? toCheckpointRecord(row) : null;
+}
+
+export async function listMarketplaceCheckpoints({
+  query = "",
+  sort = "recommended",
+  page = 1,
+  pageSize = 24,
+}: {
+  query?: string;
+  sort?: MarketplaceSort;
+  page?: number;
+  pageSize?: number;
+} = {}) {
+  const { DB } = getRuntimeEnv();
+  await ensureCheckpointSchema(DB);
+
+  const normalizedQuery = normalizeMarketplaceQuery(query);
+  const tokens = normalizedQuery.split(/\s+/).filter(Boolean).slice(0, 6);
+  const conditions = tokens.map(
+    () => "search_text LIKE ? ESCAPE '\\'",
+  );
+  const whereClause = conditions.length ? conditions.join(" AND ") : "1 = 1";
+  const searchParameters = tokens.map(toLikePattern);
+  const safePage = Math.max(1, Math.min(10_000, Math.trunc(page) || 1));
+  const safePageSize = Math.max(1, Math.min(48, Math.trunc(pageSize) || 24));
+  const offset = (safePage - 1) * safePageSize;
+
+  const queryRelevance =
+    normalizedQuery && sort === "recommended"
+      ? `CASE
+          WHEN lower(public_title) = ? THEN 4
+          WHEN instr(lower(public_title), ?) = 1 THEN 3
+          WHEN instr(lower(public_title), ?) > 0 THEN 2
+          WHEN instr(lower(public_description), ?) > 0 THEN 1
+          ELSE 0
+        END DESC,`
+      : "";
+  const orderParameters =
+    normalizedQuery && sort === "recommended"
+      ? Array(4).fill(normalizedQuery)
+      : [];
+  const orderClause =
+    sort === "latest"
+      ? "published_at DESC, checkpoint_id ASC"
+      : `${queryRelevance} quality_score DESC, published_at DESC, checkpoint_id ASC`;
+
+  const result = await DB.prepare(
+    `SELECT
+      checkpoint_id AS id,
+      public_title AS publicTitle,
+      public_description AS publicDescription,
+      agent_name AS agentName,
+      agent_description AS agentDescription,
+      agent_metadata_mode AS agentMetadataMode,
+      size_bytes AS sizeBytes,
+      format_version AS formatVersion,
+      published_at AS publishedAt
+    FROM checkpoint_marketplace_index
+    WHERE ${whereClause}
+    ORDER BY ${orderClause}
+    LIMIT ? OFFSET ?`,
+  )
+    .bind(
+      ...searchParameters,
+      ...orderParameters,
+      safePageSize,
+      offset,
+    )
+    .all<RawMarketplaceCheckpoint>();
+  const count = await DB.prepare(
+    `SELECT count(*) AS total
+    FROM checkpoint_marketplace_index
+    WHERE ${whereClause}`,
+  )
+    .bind(...searchParameters)
+    .first<{ total: number }>();
+
+  return {
+    checkpoints: (result.results ?? []).map(toMarketplaceCheckpoint),
+    total: Number(count?.total ?? 0),
+    page: safePage,
+    pageSize: safePageSize,
+    hasMore: offset + (result.results?.length ?? 0) < Number(count?.total ?? 0),
+    query: normalizedQuery,
+    sort,
+  };
 }
 
 export async function findCheckpointPublication(
@@ -568,6 +689,9 @@ export function toOwnerCheckpointDto(checkpoint: CheckpointRecord | RawCheckpoin
     cipher: normalized.cipher,
     visibility: normalized.visibility,
     publication: normalized.publication,
+    marketplaceUrl: normalized.publication
+      ? `/marketplace?q=${encodeURIComponent(normalized.id)}`
+      : null,
   };
 }
 
@@ -641,6 +765,126 @@ function publicationInsertStatement(
       publication.publishedAt,
       publication.publishedByUserId,
     );
+}
+
+function marketplaceIndexInsertStatement(
+  db: D1Database,
+  checkpoint: StoredCheckpointRecord,
+  publication: CheckpointPublicationRecord,
+) {
+  const searchText = normalizeMarketplaceQuery(
+    [
+      publication.checkpointId,
+      publication.publicTitle,
+      publication.publicDescription,
+      checkpoint.agentName,
+      checkpoint.agentDescription,
+    ].join(" "),
+  );
+  const qualityScore =
+    (publication.publicTitle.length >= 12 &&
+    publication.publicTitle.length <= 80
+      ? 3
+      : 1) +
+    (publication.publicDescription.length >= 40 &&
+    publication.publicDescription.length <= 240
+      ? 5
+      : 2) +
+    (checkpoint.agentMetadataMode === "shared" ? 2 : 1);
+
+  return db
+    .prepare(
+      `INSERT INTO checkpoint_marketplace_index (
+        checkpoint_id, public_title, public_description, agent_name,
+        agent_description, agent_metadata_mode, search_text, quality_score,
+        size_bytes, format_version, published_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      publication.checkpointId,
+      publication.publicTitle,
+      publication.publicDescription,
+      checkpoint.agentName,
+      checkpoint.agentDescription,
+      checkpoint.agentMetadataMode,
+      searchText,
+      qualityScore,
+      publication.sizeBytes,
+      publication.formatVersion,
+      publication.publishedAt,
+    );
+}
+
+function marketplaceIndexFromPublicationStatement(
+  db: D1Database,
+  checkpointId: string,
+) {
+  return db
+    .prepare(
+      `INSERT OR IGNORE INTO checkpoint_marketplace_index (
+        checkpoint_id, public_title, public_description, agent_name,
+        agent_description, agent_metadata_mode, search_text, quality_score,
+        size_bytes, format_version, published_at
+      )
+      SELECT
+        p.checkpoint_id,
+        p.public_title,
+        p.public_description,
+        c.agent_name,
+        c.agent_description,
+        c.agent_metadata_mode,
+        lower(
+          p.checkpoint_id || ' ' || p.public_title || ' ' || p.public_description || ' ' ||
+          c.agent_name || ' ' || c.agent_description
+        ),
+        (
+          CASE WHEN length(p.public_title) BETWEEN 12 AND 80 THEN 3 ELSE 1 END +
+          CASE WHEN length(p.public_description) BETWEEN 40 AND 240 THEN 5 ELSE 2 END +
+          CASE WHEN c.agent_metadata_mode = 'shared' THEN 2 ELSE 1 END
+        ),
+        p.size_bytes,
+        p.format_version,
+        p.published_at
+      FROM checkpoint_publications p
+      JOIN checkpoints c ON c.id = p.checkpoint_id
+      WHERE p.checkpoint_id = ?`,
+    )
+    .bind(checkpointId);
+}
+
+function normalizeMarketplaceQuery(value: string) {
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 160);
+}
+
+function toLikePattern(value: string) {
+  return `%${value.replace(/[\\%_]/g, "\\$&")}%`;
+}
+
+function toMarketplaceCheckpoint(
+  checkpoint: RawMarketplaceCheckpoint,
+): MarketplaceCheckpoint {
+  const encodedId = encodeURIComponent(checkpoint.id);
+  return {
+    id: checkpoint.id,
+    title: checkpoint.publicTitle,
+    description: checkpoint.publicDescription,
+    agent: {
+      name: checkpoint.agentName,
+      description: checkpoint.agentDescription,
+      metadataMode: checkpoint.agentMetadataMode,
+    },
+    sizeBytes: checkpoint.sizeBytes,
+    formatVersion: checkpoint.formatVersion,
+    publishedAt: checkpoint.publishedAt,
+    downloadUrl: `/api/public/checkpoints/${encodedId}/download`,
+    metadataUrl: `/api/public/checkpoints/${encodedId}`,
+    marketplaceUrl: `/marketplace?q=${encodedId}`,
+  };
 }
 
 function toCheckpointRecord(row: RawCheckpointRecord): CheckpointRecord {

@@ -75,6 +75,35 @@ export const checkpointPublications = sqliteTable(
 
 export type CheckpointPublication = typeof checkpointPublications.$inferSelect;
 
+export const checkpointMarketplaceIndex = sqliteTable(
+  "checkpoint_marketplace_index",
+  {
+    checkpointId: text("checkpoint_id")
+      .primaryKey()
+      .references(() => checkpointPublications.checkpointId),
+    publicTitle: text("public_title").notNull(),
+    publicDescription: text("public_description").notNull(),
+    agentName: text("agent_name").notNull(),
+    agentDescription: text("agent_description").notNull(),
+    agentMetadataMode: text("agent_metadata_mode").notNull(),
+    searchText: text("search_text").notNull(),
+    qualityScore: integer("quality_score").notNull().default(0),
+    sizeBytes: integer("size_bytes").notNull(),
+    formatVersion: integer("format_version").notNull(),
+    publishedAt: text("published_at").notNull(),
+  },
+  (table) => [
+    index("checkpoint_marketplace_published_idx").on(table.publishedAt),
+    index("checkpoint_marketplace_recommended_idx").on(
+      table.qualityScore,
+      table.publishedAt,
+    ),
+  ],
+);
+
+export type CheckpointMarketplaceIndex =
+  typeof checkpointMarketplaceIndex.$inferSelect;
+
 export const apiTokens = sqliteTable(
   "api_tokens",
   {

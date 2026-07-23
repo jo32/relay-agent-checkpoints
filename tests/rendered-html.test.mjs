@@ -271,6 +271,19 @@ test("includes accessible product landmarks", async () => {
   assert.match(html, /aria-label="Search checkpoints"/);
 });
 
+test("renders an anonymous public checkpoint marketplace", async () => {
+  const response = await fetch(`${origin}/marketplace`);
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /Public checkpoint marketplace/);
+  assert.match(html, /Start from work/);
+  assert.match(html, /What do you want to build on\?/);
+  assert.match(html, /Recommended/);
+  assert.match(html, /Public checkpoints/);
+  assert.match(html, /No key or sign-in/);
+  assert.match(html, /aria-label="Marketplace navigation"/);
+});
+
 test("uses ChatGPT as the only interactive sign-in provider", async () => {
   const pageSource = await readFile(
     new URL("../app/sign-in/page.tsx", import.meta.url),
@@ -304,6 +317,7 @@ test("leads with Relay's explicit private and public security boundary", async (
   assert.match(pageSource, /if \(!principal\) return <RelayLanding \/>/);
   assert.doesNotMatch(pageSource, /redirect\("\/sign-in"\)/);
   assert.match(landingSource, /Private by default · public by choice/);
+  assert.match(landingSource, /href="\/marketplace"/);
   assert.match(landingSource, /Private by default/);
   assert.match(landingSource, /private or public/);
   assert.match(landingSource, /Install Relay skills/);
@@ -629,6 +643,10 @@ test("device authorization issues and revokes a scoped agent credential", async 
     directPublic.completed.checkpoint.publication.sourceCiphertextChecksum,
     null,
   );
+  assert.equal(
+    directPublic.completed.checkpoint.marketplaceUrl,
+    `/marketplace?q=${directPublicId}`,
+  );
 
   const publicMetadataResponse = await fetch(
     `${origin}/api/public/checkpoints/${directPublicId}`,
@@ -636,6 +654,8 @@ test("device authorization issues and revokes a scoped agent credential", async 
   assert.equal(publicMetadataResponse.status, 200);
   const publicMetadata = await publicMetadataResponse.json();
   assert.equal(publicMetadata.checkpoint.visibility, "public");
+  assert.equal(publicMetadata.checkpoint.agent.name, "Release Gardener");
+  assert.equal(publicMetadata.checkpoint.agent.metadataMode, "shared");
   assert.equal(publicMetadata.checkpoint.publication.title, directPublicTitle);
   assert.equal(
     publicMetadata.checkpoint.publication.description,
@@ -643,11 +663,66 @@ test("device authorization issues and revokes a scoped agent credential", async 
   );
   assert.deepEqual(
     Object.keys(publicMetadata.checkpoint).sort(),
-    ["id", "publication", "visibility"],
+    ["agent", "id", "marketplaceUrl", "publication", "visibility"],
   );
   assert.equal(
     publicMetadata.checkpoint.publication.sourceCiphertextChecksum,
     undefined,
+  );
+  assert.equal(
+    publicMetadata.checkpoint.marketplaceUrl,
+    `/marketplace?q=${directPublicId}`,
+  );
+
+  const marketplaceSearchResponse = await fetch(
+    `${origin}/api/public/checkpoints?q=release&sort=recommended&limit=12`,
+  );
+  assert.equal(marketplaceSearchResponse.status, 200);
+  const marketplaceSearch = await marketplaceSearchResponse.json();
+  const marketplaceItem = marketplaceSearch.checkpoints.find(
+    (item) => item.id === directPublicId,
+  );
+  assert.ok(marketplaceItem);
+  assert.equal(marketplaceItem.title, directPublicTitle);
+  assert.equal(marketplaceItem.agent.name, "Release Gardener");
+  assert.equal(marketplaceItem.agent.metadataMode, "shared");
+  assert.equal(
+    marketplaceItem.downloadUrl,
+    `/api/public/checkpoints/${directPublicId}/download`,
+  );
+  assert.equal(
+    marketplaceItem.marketplaceUrl,
+    `/marketplace?q=${directPublicId}`,
+  );
+  assert.ok(
+    marketplaceSearch.recommendations.some((item) => item.id === directPublicId),
+  );
+  assert.ok(
+    marketplaceSearch.checkpoints.every((item) => item.id !== checkpointId),
+    "private checkpoints must never enter the public marketplace index",
+  );
+
+  const marketplaceIdSearchResponse = await fetch(
+    `${origin}/api/public/checkpoints?q=${encodeURIComponent(directPublicId)}`,
+  );
+  assert.equal(marketplaceIdSearchResponse.status, 200);
+  const marketplaceIdSearch = await marketplaceIdSearchResponse.json();
+  assert.deepEqual(
+    marketplaceIdSearch.checkpoints.map((item) => item.id),
+    [directPublicId],
+  );
+
+  const marketplaceListingResponse = await fetch(
+    `${origin}/api/public/checkpoints?sort=latest&limit=48`,
+  );
+  assert.equal(marketplaceListingResponse.status, 200);
+  const marketplaceListing = await marketplaceListingResponse.json();
+  assert.ok(
+    marketplaceListing.checkpoints.some((item) => item.id === directPublicId),
+  );
+  assert.ok(
+    marketplaceListing.checkpoints.every((item) => item.id !== checkpointId),
+    "private checkpoints must never enter the public marketplace index",
   );
   const publicDownloadResponse = await fetch(
     `${origin}/api/public/checkpoints/${directPublicId}/download`,

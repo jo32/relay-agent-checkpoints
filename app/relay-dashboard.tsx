@@ -12,6 +12,7 @@ import {
   FileArchive,
   Folder,
   GitBranch,
+  GitFork,
   Globe2,
   HardDrive,
   Link2,
@@ -24,6 +25,7 @@ import {
   Share2,
   ShieldCheck,
   SquareTerminal,
+  Store,
   UploadCloud,
   Users,
   X,
@@ -419,7 +421,17 @@ function GlobalHeader({
       </label>
 
       <div className="header-account">
-        <span>Private and public checkpoint registry</span>
+        <a
+          className="header-github"
+          href="https://github.com/jo32/relay-agent-checkpoints"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="View Relay source code on GitHub"
+        >
+          <GitFork size={14} />
+          <span>GitHub</span>
+        </a>
+        <span className="header-registry-label">Private and public checkpoint registry</span>
         <span className="avatar">{initials(displayName)}</span>
       </div>
     </header>
@@ -496,6 +508,10 @@ function Sidebar({
               </button>
             );
           })}
+          <Link href="/marketplace">
+            <Store size={16} />
+            <span>Marketplace</span>
+          </Link>
         </nav>
 
         {workspaceNames.length > 0 && (
@@ -636,53 +652,67 @@ function CheckpointsView({
                 </div>
               </div>
             </div>
-            <dl className="latest-meta">
-              <div>
-                <dt>Visibility</dt>
-                <dd>{latest.visibility === "public" ? "Permanent public artifact" : "Private ciphertext"}</dd>
-              </div>
-              <div>
-                <dt>Agent metadata</dt>
-                <dd>{latest.agentMetadataMode === "shared" ? "User approved" : "Privacy-safe alias"}</dd>
-              </div>
-              {latest.visibility === "public" ? (
-                <>
-                  <div>
-                    <dt>Public URL</dt>
-                    <dd className="mono">{publicDownloadPath(latest)}</dd>
-                  </div>
-                  <div>
-                    <dt>Published</dt>
-                    <dd>{formatDate(latest.publication!.publishedAt)}</dd>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div><dt>Cipher</dt><dd>{latest.cipher}</dd></div>
-                  <div><dt>Integrity</dt><dd className="mono">{shortChecksum(latest.checksum)}</dd></div>
-                </>
-              )}
-            </dl>
-            <div className="latest-actions">
-              <button className="button secondary" type="button" onClick={() => onRestore(latest)}>
-                <ArrowDownToLine size={15} />
-                {latest.visibility === "public" ? "Copy keyless restore" : "Restore via skill"}
-              </button>
-              {latest.visibility === "public" ? (
-                <button className="icon-control" type="button" aria-label={`Copy public URL for ${checkpointTitle(latest)}`} onClick={() => onCopyPublicUrl(latest)}>
-                  <Link2 size={15} />
+            <div className="latest-side">
+              <dl className="latest-meta">
+                <div>
+                  <dt>Visibility</dt>
+                  <dd>{latest.visibility === "public" ? "Permanent public artifact" : "Private ciphertext"}</dd>
+                </div>
+                <div>
+                  <dt>Agent metadata</dt>
+                  <dd>{latest.agentMetadataMode === "shared" ? "User approved" : "Privacy-safe alias"}</dd>
+                </div>
+                {latest.visibility === "public" ? (
+                  <>
+                    <div>
+                      <dt>Public URL</dt>
+                      <dd className="mono">{publicDownloadPath(latest)}</dd>
+                    </div>
+                    <div>
+                      <dt>Published</dt>
+                      <dd>{formatDate(latest.publication!.publishedAt)}</dd>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div><dt>Cipher</dt><dd>{latest.cipher}</dd></div>
+                    <div><dt>Integrity</dt><dd className="mono">{shortChecksum(latest.checksum)}</dd></div>
+                  </>
+                )}
+              </dl>
+              <div className="latest-actions">
+                <button
+                  className="button secondary"
+                  type="button"
+                  aria-label={latest.visibility === "public" ? "Copy keyless restore command" : "Restore via skill"}
+                  title={latest.visibility === "public" ? "Copy keyless restore command" : "Restore via skill"}
+                  onClick={() => onRestore(latest)}
+                >
+                  <ArrowDownToLine size={15} />
+                  Restore
                 </button>
-              ) : (
-                <>
-                  <button className="button secondary" type="button" onClick={() => onMakePublic(latest)}>
-                    <Globe2 size={15} />
-                    Make public
+                {latest.visibility === "public" ? (
+                  <button className="icon-control" type="button" aria-label={`Copy public URL for ${checkpointTitle(latest)}`} onClick={() => onCopyPublicUrl(latest)}>
+                    <Link2 size={15} />
                   </button>
-                  <button className="icon-control" type="button" aria-label={`Create expiring share for ${latest.label}`} onClick={() => onShare(latest)}>
-                    <Share2 size={15} />
-                  </button>
-                </>
-              )}
+                ) : (
+                  <>
+                    <button
+                      className="button secondary"
+                      type="button"
+                      aria-label={`Make ${checkpointTitle(latest)} public`}
+                      title="Make a separate public artifact"
+                      onClick={() => onMakePublic(latest)}
+                    >
+                      <Globe2 size={15} />
+                      Publish
+                    </button>
+                    <button className="icon-control" type="button" aria-label={`Create expiring share for ${latest.label}`} title="Create expiring share" onClick={() => onShare(latest)}>
+                      <Share2 size={15} />
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         </section>

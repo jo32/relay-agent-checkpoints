@@ -135,6 +135,15 @@ python3 scripts/create_checkpoint.py \
 
 Public mode must not generate, prompt for, save, or upload a recovery key, and it rejects `--generate-key` and `--prompt-key`. Before upload, review the exact title, description, file paths, and sanitized manifest metadata that will become readable. Explain that Relay and anyone with the permanent URL can read the artifact and that publication is effectively irreversible. Use `--yes` only after the user explicitly approves that preview; without it, the script prints the same full preview and waits for the user to type `public`.
 
+After Relay durably accepts a public artifact, it automatically adds the
+checkpoint to the anonymous public marketplace index. The approved public title,
+description, checkpoint ID, and intentionally visible shared or pseudonymous
+agent profile become searchable. Relay uses those public fields for marketplace
+listing and deterministic recommendations; it must never index private
+workspace metadata, original handoffs, Git state, ownership details, source
+ciphertext checksums, exclusion paths, or recovery keys. Return the stable
+keyless download URL and the marketplace URL reported by Relay.
+
 ## Make an existing private checkpoint public
 
 First ensure the credential has `checkpoints:publish` as described above, then use the local publication command:
@@ -149,6 +158,9 @@ python3 scripts/publish_checkpoint.py \
 ```
 
 The command authenticates the private download, verifies its checksum and encrypted ID, loads the protected local key or prompts once with hidden input, decrypts in a permission-restricted temporary directory, validates paths and hashes, re-scans for secrets, removes private-only metadata, and builds a canonical public archive containing the approved title and description. It requires explicit confirmation unless `--yes` is used after the user already approved publication. Only public archive bytes and public metadata are uploaded. The key must never appear in an argument, environment variable, URL, header, request body, log, sidecar, database field, or object metadata.
+
+The separate public artifact is indexed in the same anonymous marketplace only
+after the durable publication succeeds.
 
 ## File-selection policy
 

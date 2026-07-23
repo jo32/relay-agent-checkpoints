@@ -147,6 +147,21 @@ const PRODUCT_SCHEMA = [
   )`,
   "CREATE UNIQUE INDEX IF NOT EXISTS checkpoint_publications_object_key_uidx ON checkpoint_publications(object_key)",
   "CREATE INDEX IF NOT EXISTS checkpoint_publications_tenant_published_idx ON checkpoint_publications(tenant_id, published_at DESC)",
+  `CREATE TABLE IF NOT EXISTS checkpoint_marketplace_index (
+    checkpoint_id TEXT PRIMARY KEY REFERENCES checkpoint_publications(checkpoint_id),
+    public_title TEXT NOT NULL,
+    public_description TEXT NOT NULL,
+    agent_name TEXT NOT NULL,
+    agent_description TEXT NOT NULL,
+    agent_metadata_mode TEXT NOT NULL,
+    search_text TEXT NOT NULL,
+    quality_score INTEGER NOT NULL DEFAULT 0,
+    size_bytes INTEGER NOT NULL,
+    format_version INTEGER NOT NULL,
+    published_at TEXT NOT NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS checkpoint_marketplace_published_idx ON checkpoint_marketplace_index(published_at DESC)",
+  "CREATE INDEX IF NOT EXISTS checkpoint_marketplace_recommended_idx ON checkpoint_marketplace_index(quality_score DESC, published_at DESC)",
   `CREATE TABLE IF NOT EXISTS device_authorizations (
     device_code_hash TEXT PRIMARY KEY,
     user_code_hash TEXT NOT NULL,
@@ -237,6 +252,34 @@ async function ensureSchema(db: D1Database): Promise<void> {
     ),
     db.prepare(
       "CREATE INDEX IF NOT EXISTS checkpoint_publications_tenant_published_idx ON checkpoint_publications(tenant_id, published_at DESC)",
+    ),
+    db.prepare(
+      `INSERT OR IGNORE INTO checkpoint_marketplace_index (
+        checkpoint_id, public_title, public_description, agent_name,
+        agent_description, agent_metadata_mode, search_text, quality_score,
+        size_bytes, format_version, published_at
+      )
+      SELECT
+        p.checkpoint_id,
+        p.public_title,
+        p.public_description,
+        c.agent_name,
+        c.agent_description,
+        c.agent_metadata_mode,
+        lower(
+          p.checkpoint_id || ' ' || p.public_title || ' ' || p.public_description || ' ' ||
+          c.agent_name || ' ' || c.agent_description
+        ),
+        (
+          CASE WHEN length(p.public_title) BETWEEN 12 AND 80 THEN 3 ELSE 1 END +
+          CASE WHEN length(p.public_description) BETWEEN 40 AND 240 THEN 5 ELSE 2 END +
+          CASE WHEN c.agent_metadata_mode = 'shared' THEN 2 ELSE 1 END
+        ),
+        p.size_bytes,
+        p.format_version,
+        p.published_at
+      FROM checkpoint_publications p
+      JOIN checkpoints c ON c.id = p.checkpoint_id`,
     ),
   ]);
 }

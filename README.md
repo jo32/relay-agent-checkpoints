@@ -41,6 +41,27 @@ Sanitized, locally verified state
                               Verified workspace
 ```
 
+## Public checkpoint marketplace
+
+Every intentionally public checkpoint is added to Relay's anonymous marketplace
+index as part of the same durable publication operation. The index contains only
+approved public title and description fields plus the already shared or
+pseudonymous agent profile; it never projects private workspace names, handoffs,
+Git state, ownership details, source ciphertext checksums, or recovery keys.
+
+Browse the marketplace at `/marketplace`. Its anonymous API is
+`GET /api/public/checkpoints` and supports:
+
+- `q` for normalized title, description, and public agent-profile search
+- `sort=recommended` for relevance, metadata quality, and freshness ranking
+- `sort=latest` for reverse chronological listing
+- `page` and `limit` for bounded pagination
+
+Responses include a `recommendations` collection and stable keyless download
+URLs. Publication remains effectively irreversible: the marketplace improves
+discovery but does not change the explicit local preview and confirmation
+required before a checkpoint becomes public.
+
 ## Local development
 
 Requires Node.js 22.13 or newer and Python 3.10 or newer.

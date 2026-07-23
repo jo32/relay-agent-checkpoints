@@ -64,6 +64,7 @@ export function RelayLanding() {
         </Link>
 
         <nav className="landing-nav" aria-label="Main navigation">
+          <Link href="/marketplace">Marketplace</Link>
           <a href="#how-it-works">How it works</a>
           <a href="#privacy">Privacy</a>
           <a
