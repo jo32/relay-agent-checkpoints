@@ -2619,8 +2619,18 @@ kbd {
 .setup-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  align-items: start;
   gap: 16px;
+}
+
+.setup-grid .setup-step,
+.setup-grid .code-block {
+  display: flex;
+  flex-direction: column;
+}
+
+.setup-grid .code-block,
+.setup-grid .code-block pre {
+  flex: 1;
 }
 
 .code-block {
