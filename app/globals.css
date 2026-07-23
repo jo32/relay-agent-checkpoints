@@ -378,6 +378,30 @@ kbd {
   color: var(--red);
 }
 
+.hero-source-link {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  text-decoration: none;
+  transition: color 140ms ease;
+}
+
+.hero-source-link:hover {
+  color: var(--foreground);
+}
+
+.hero-source-link svg:last-child {
+  transition: transform 140ms ease;
+}
+
+.hero-source-link:hover svg:last-child {
+  transform: translateX(2px);
+}
+
 .install-visual {
   min-height: 500px;
   display: flex;
@@ -586,7 +610,7 @@ kbd {
 .trust-ribbon {
   width: min(1200px, calc(100% - 48px));
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   margin: 0 auto;
   border: 1px solid var(--border);
   border-radius: 10px;

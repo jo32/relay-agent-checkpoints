@@ -5,6 +5,7 @@ import {
   Check,
   Copy,
   Download,
+  GitFork,
   Globe2,
   Laptop,
   LockKeyhole,
@@ -65,6 +66,13 @@ export function RelayLanding() {
         <nav className="landing-nav" aria-label="Main navigation">
           <a href="#how-it-works">How it works</a>
           <a href="#privacy">Privacy</a>
+          <a
+            href="https://github.com/jo32/relay-agent-checkpoints"
+            target="_blank"
+            rel="noreferrer"
+          >
+            GitHub
+          </a>
         </nav>
 
         <Link className="landing-vault-link" href="/sign-in?return_to=%2F">
@@ -113,6 +121,16 @@ export function RelayLanding() {
                 ? "Clipboard access is blocked. Download the bundle instead."
                 : "Paste the prompt into your agent. Relay verifies the bundle before installation."}
             </p>
+            <a
+              className="hero-source-link"
+              href="https://github.com/jo32/relay-agent-checkpoints"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <GitFork size={15} aria-hidden="true" />
+              Open source on GitHub — audit, fork, or self-host Relay
+              <ArrowRight size={14} aria-hidden="true" />
+            </a>
           </div>
 
           <div className="install-visual" aria-label="Relay private encrypted checkpoint preview">
@@ -194,6 +212,10 @@ export function RelayLanding() {
           <div>
             <ShieldCheck size={15} />
             <span><strong>Verified restore</strong> — hashes and paths checked</span>
+          </div>
+          <div>
+            <GitFork size={15} />
+            <span><strong>Open source</strong> — auditable, forkable, self-hostable</span>
           </div>
         </section>
 
@@ -349,6 +371,13 @@ export function RelayLanding() {
         <p>Pause here. Continue anywhere.</p>
         <div>
           <a href="/skills/relay-checkpoint-skills.zip.sha256">Bundle checksum</a>
+          <a
+            href="https://github.com/jo32/relay-agent-checkpoints"
+            target="_blank"
+            rel="noreferrer"
+          >
+            GitHub source
+          </a>
           <Link href="/sign-in?return_to=%2F">Open Relay</Link>
         </div>
       </footer>
