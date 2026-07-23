@@ -21,7 +21,7 @@ function installPrompt(origin: string) {
   const bundleUrl = `${origin}/skills/relay-checkpoint-skills.zip`;
   const checksumUrl = `${bundleUrl}.sha256`;
 
-  return `Install Relay's checkpoint skills in this project. No Relay sign-in is needed for installation.
+  return `Install or update Relay's checkpoint skills in this project. No Relay sign-in is needed for installation or updates.
 
 Relay URL: ${origin}
 

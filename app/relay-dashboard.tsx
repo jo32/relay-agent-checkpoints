@@ -1173,7 +1173,7 @@ function SkillIntegrationModal({ onClose }: { onClose: () => void }) {
 
   const skillBundleUrl = `${origin}/skills/relay-checkpoint-skills.zip`;
   const skillChecksumUrl = `${skillBundleUrl}.sha256`;
-  const installPrompt = `Install Relay's checkpoint skills in this project. No Relay sign-in is needed for installation.
+  const installPrompt = `Install or update Relay's checkpoint skills in this project. No Relay sign-in is needed for installation or updates.
 
 Relay URL: ${origin}
 
@@ -1230,8 +1230,8 @@ If the Relay credential is missing or expired, let the skill open the approval p
             <div className="step-heading">
               <span>1</span>
               <div>
-                <h3>Ask your agent to install</h3>
-                <p>The agent downloads and verifies the skills, with no sign-in.</p>
+                <h3>Ask your agent to update or install</h3>
+                <p>The agent downloads, verifies, and safely updates or installs the skills, with no sign-in.</p>
               </div>
               <ShieldCheck size={17} />
             </div>

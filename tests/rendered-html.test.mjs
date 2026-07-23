@@ -345,7 +345,7 @@ test("agent-operated skill prompts are copy-ready", async () => {
     new URL("../app/relay-dashboard.tsx", import.meta.url),
     "utf8",
   );
-  assert.match(source, /Install Relay's checkpoint skills in this project\. No Relay sign-in is needed for installation/);
+  assert.match(source, /Install or update Relay's checkpoint skills in this project\. No Relay sign-in is needed for installation or updates/);
   assert.match(source, /relay-checkpoint-skills\.zip/);
   assert.match(source, /skillChecksumUrl = `\$\{skillBundleUrl\}\.sha256`/);
   assert.match(source, /Stop after installation\. Do not sign in, connect an account/);
