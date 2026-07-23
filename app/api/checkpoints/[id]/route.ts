@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { authenticateApiToken, findCheckpoint } from "@/db/checkpoints";
+import {
+  authenticateApiToken,
+  findCheckpoint,
+  toOwnerCheckpointDto,
+} from "@/db/checkpoints";
 
 export const dynamic = "force-dynamic";
 
@@ -21,25 +25,7 @@ export async function GET(
   }
   return NextResponse.json(
     {
-      checkpoint: {
-        id: checkpoint.id,
-        workspaceName: checkpoint.workspaceName,
-        label: checkpoint.label,
-        sourceAgent: checkpoint.sourceAgent,
-        agentName: checkpoint.agentName,
-        agentDescription: checkpoint.agentDescription,
-        agentMetadataMode: checkpoint.agentMetadataMode,
-        status: checkpoint.status,
-        createdAt: checkpoint.createdAt,
-        sizeBytes: checkpoint.sizeBytes,
-        fileCount: checkpoint.fileCount,
-        excludedCount: checkpoint.excludedCount,
-        parentId: checkpoint.parentId,
-        handoff: checkpoint.handoff,
-        checksum: checkpoint.checksum,
-        encryptionVersion: checkpoint.encryptionVersion,
-        cipher: checkpoint.cipher,
-      },
+      checkpoint: toOwnerCheckpointDto(checkpoint),
     },
     { headers: { "cache-control": "no-store" } },
   );

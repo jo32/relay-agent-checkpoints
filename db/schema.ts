@@ -47,6 +47,34 @@ export const checkpoints = sqliteTable(
 
 export type Checkpoint = typeof checkpoints.$inferSelect;
 
+export const checkpointPublications = sqliteTable(
+  "checkpoint_publications",
+  {
+    checkpointId: text("checkpoint_id")
+      .primaryKey()
+      .references(() => checkpoints.id),
+    tenantId: text("tenant_id").notNull(),
+    objectKey: text("object_key").notNull(),
+    checksum: text("checksum").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    formatVersion: integer("format_version").notNull().default(1),
+    sourceCiphertextChecksum: text("source_ciphertext_checksum"),
+    publicTitle: text("public_title").notNull(),
+    publicDescription: text("public_description").notNull(),
+    publishedAt: text("published_at").notNull(),
+    publishedByUserId: text("published_by_user_id"),
+  },
+  (table) => [
+    uniqueIndex("checkpoint_publications_object_key_uidx").on(table.objectKey),
+    index("checkpoint_publications_tenant_published_idx").on(
+      table.tenantId,
+      table.publishedAt,
+    ),
+  ],
+);
+
+export type CheckpointPublication = typeof checkpointPublications.$inferSelect;
+
 export const apiTokens = sqliteTable(
   "api_tokens",
   {
@@ -58,7 +86,9 @@ export const apiTokens = sqliteTable(
     label: text("label").notNull(),
     scopes: text("scopes")
       .notNull()
-      .default("checkpoints:read checkpoints:write checkpoints:share"),
+      .default(
+        "checkpoints:read checkpoints:write checkpoints:share",
+      ),
     createdAt: text("created_at").notNull(),
     lastUsedAt: text("last_used_at"),
     expiresAt: text("expires_at"),
@@ -76,6 +106,9 @@ export const deviceAuthorizations = sqliteTable(
     deviceCodeHash: text("device_code_hash").primaryKey(),
     userCodeHash: text("user_code_hash").notNull(),
     clientName: text("client_name").notNull(),
+    requestedScopes: text("requested_scopes")
+      .notNull()
+      .default("checkpoints:read checkpoints:write checkpoints:share"),
     status: text("status").notNull().default("pending"),
     tenantId: text("tenant_id"),
     userId: text("user_id"),

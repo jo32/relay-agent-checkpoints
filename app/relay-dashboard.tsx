@@ -12,8 +12,10 @@ import {
   FileArchive,
   Folder,
   GitBranch,
+  Globe2,
   HardDrive,
   Link2,
+  LockKeyhole,
   LogOut,
   Menu,
   RefreshCw,
@@ -29,6 +31,16 @@ import {
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AuthSource } from "../lib/principal";
+
+type CheckpointPublication = {
+  title: string;
+  description: string;
+  checksum: string;
+  sizeBytes: number;
+  formatVersion: number;
+  sourceCiphertextChecksum: string | null;
+  publishedAt: string;
+};
 
 type Checkpoint = {
   id: string;
@@ -48,6 +60,8 @@ type Checkpoint = {
   checksum: string;
   encryptionVersion: number;
   cipher: string;
+  visibility: "private" | "public";
+  publication: CheckpointPublication | null;
   demo?: boolean;
 };
 
@@ -74,6 +88,17 @@ const previewCheckpoints: Checkpoint[] = [
     checksum: "sha256:7b26d3f912e",
     encryptionVersion: 2,
     cipher: "AES-256-GCM",
+    visibility: "public",
+    publication: {
+      title: "Quantum workspace handoff",
+      description:
+        "A sanitized, intentionally public workspace checkpoint prepared for keyless restoration.",
+      checksum: "sha256:9092c52e3b4",
+      sizeBytes: 16_900_000,
+      formatVersion: 1,
+      sourceCiphertextChecksum: "sha256:7b26d3f912e",
+      publishedAt: "2026-07-18T09:00:00.000Z",
+    },
     demo: true,
   },
   {
@@ -95,6 +120,8 @@ const previewCheckpoints: Checkpoint[] = [
     checksum: "sha256:26f07c44d19",
     encryptionVersion: 2,
     cipher: "AES-256-GCM",
+    visibility: "private",
+    publication: null,
     demo: true,
   },
   {
@@ -116,6 +143,8 @@ const previewCheckpoints: Checkpoint[] = [
     checksum: "sha256:18c3ab0f2c7",
     encryptionVersion: 2,
     cipher: "AES-256-GCM",
+    visibility: "private",
+    publication: null,
     demo: true,
   },
 ];
@@ -202,7 +231,7 @@ export default function RelayDashboard({
         !workspaceFilter || checkpoint.workspaceName === workspaceFilter;
       const matchesSearch =
         !query ||
-        `${checkpoint.label} ${checkpoint.workspaceName} ${checkpoint.sourceAgent} ${checkpoint.agentName} ${checkpoint.agentDescription} ${checkpoint.id}`
+        `${checkpoint.label} ${checkpoint.workspaceName} ${checkpoint.sourceAgent} ${checkpoint.agentName} ${checkpoint.agentDescription} ${checkpoint.publication?.title ?? ""} ${checkpoint.publication?.description ?? ""} ${checkpoint.id}`
           .toLowerCase()
           .includes(query);
       return matchesWorkspace && matchesSearch;
@@ -292,6 +321,12 @@ export default function RelayDashboard({
               onConnect={() => setIntegrationOpen(true)}
               onShare={(checkpoint) => void shareCheckpoint(checkpoint, setToast)}
               onRestore={(checkpoint) => void copyRestorePrompt(checkpoint, setToast)}
+              onMakePublic={(checkpoint) =>
+                void copyMakePublicPrompt(checkpoint, setToast)
+              }
+              onCopyPublicUrl={(checkpoint) =>
+                void copyPublicUrl(checkpoint, setToast)
+              }
             />
           )}
 
@@ -303,6 +338,13 @@ export default function RelayDashboard({
             <SharedView
               checkpoints={checkpoints}
               onShare={(checkpoint) => void shareCheckpoint(checkpoint, setToast)}
+              onRestore={(checkpoint) => void copyRestorePrompt(checkpoint, setToast)}
+              onMakePublic={(checkpoint) =>
+                void copyMakePublicPrompt(checkpoint, setToast)
+              }
+              onCopyPublicUrl={(checkpoint) =>
+                void copyPublicUrl(checkpoint, setToast)
+              }
             />
           )}
         </main>
@@ -377,7 +419,7 @@ function GlobalHeader({
       </label>
 
       <div className="header-account">
-        <span>Locally keyed checkpoint registry</span>
+        <span>Private and public checkpoint registry</span>
         <span className="avatar">{initials(displayName)}</span>
       </div>
     </header>
@@ -414,7 +456,7 @@ function Sidebar({
   const navigation = [
     { id: "checkpoints" as const, label: "Checkpoints", icon: Archive },
     { id: "workspaces" as const, label: "Workspaces", icon: Folder },
-    { id: "shared" as const, label: "Shared links", icon: Users },
+    { id: "shared" as const, label: "Sharing", icon: Users },
   ];
 
   return (
@@ -480,7 +522,7 @@ function Sidebar({
             <span className="status-dot" />
             <div>
               <strong>{storageOnline ? "Storage connected" : "Storage unavailable"}</strong>
-              <small>{storageOnline ? "Encrypted workspaces · optional agent profiles" : "Retry from the status banner"}</small>
+              <small>{storageOnline ? "Private ciphertext · intentional public artifacts" : "Retry from the status banner"}</small>
             </div>
           </div>
           <div className="account-row">
@@ -515,6 +557,8 @@ function CheckpointsView({
   onConnect,
   onShare,
   onRestore,
+  onMakePublic,
+  onCopyPublicUrl,
 }: {
   checkpoints: Checkpoint[];
   allCheckpoints: Checkpoint[];
@@ -524,9 +568,14 @@ function CheckpointsView({
   onConnect: () => void;
   onShare: (checkpoint: Checkpoint) => void;
   onRestore: (checkpoint: Checkpoint) => void;
+  onMakePublic: (checkpoint: Checkpoint) => void;
+  onCopyPublicUrl: (checkpoint: Checkpoint) => void;
 }) {
   const workspaceCount = new Set(allCheckpoints.map((item) => item.workspaceName)).size;
   const totalBytes = allCheckpoints.reduce((sum, item) => sum + item.sizeBytes, 0);
+  const publicCount = allCheckpoints.filter(
+    (checkpoint) => checkpoint.visibility === "public",
+  ).length;
   const latest = checkpoints[0] ?? allCheckpoints[0] ?? null;
 
   return (
@@ -537,7 +586,7 @@ function CheckpointsView({
         description={
           workspaceFilter
             ? `Immutable history for ${workspaceFilter}.`
-            : "Workspace archives encrypted with a key generated or entered locally and never sent to Relay."
+            : "Private checkpoints stay locally encrypted; public checkpoints are separate, intentionally readable artifacts."
         }
         action={
           <button className="button primary" type="button" onClick={onConnect}>
@@ -551,7 +600,7 @@ function CheckpointsView({
         <Stat label="Checkpoints" value={String(allCheckpoints.length)} icon={Archive} tone="clay" />
         <Stat label="Workspaces" value={String(workspaceCount)} icon={Folder} tone="ochre" />
         <Stat label="Archive storage" value={formatBytes(totalBytes)} icon={HardDrive} tone="ocean" />
-        <Stat label="Encryption" value="AES-GCM" icon={ShieldCheck} tone="sage" />
+        <Stat label="Public" value={String(publicCount)} icon={Globe2} tone="sage" />
       </section>
 
       {latest && (
@@ -567,12 +616,13 @@ function CheckpointsView({
             <div className="latest-primary">
               <span className="entity-icon"><FileArchive size={18} /></span>
               <div>
-                <span className="badge success">Ready</span>
-                <h2>{latest.label}</h2>
+                <div className="badge-row">
+                  <span className="badge success">Ready</span>
+                  <VisibilityBadge checkpoint={latest} />
+                </div>
+                <h2>{checkpointTitle(latest)}</h2>
                 <p>
-                  {latest.encryptionVersion >= 2
-                    ? "Workspace name, handoff, and file manifest are encrypted inside this checkpoint."
-                    : latest.handoff || "Legacy plaintext metadata."}
+                  {checkpointDescription(latest)}
                 </p>
                 <div className="agent-summary">
                   <span className="agent-avatar">{initials(latest.agentName)}</span>
@@ -588,21 +638,51 @@ function CheckpointsView({
             </div>
             <dl className="latest-meta">
               <div>
+                <dt>Visibility</dt>
+                <dd>{latest.visibility === "public" ? "Permanent public artifact" : "Private ciphertext"}</dd>
+              </div>
+              <div>
                 <dt>Agent metadata</dt>
                 <dd>{latest.agentMetadataMode === "shared" ? "User approved" : "Privacy-safe alias"}</dd>
               </div>
-              <div><dt>Cipher</dt><dd>{latest.cipher}</dd></div>
-              <div><dt>Checkpoint</dt><dd className="mono">{latest.id}</dd></div>
-              <div><dt>Integrity</dt><dd className="mono">{shortChecksum(latest.checksum)}</dd></div>
+              {latest.visibility === "public" ? (
+                <>
+                  <div>
+                    <dt>Public URL</dt>
+                    <dd className="mono">{publicDownloadPath(latest)}</dd>
+                  </div>
+                  <div>
+                    <dt>Published</dt>
+                    <dd>{formatDate(latest.publication!.publishedAt)}</dd>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div><dt>Cipher</dt><dd>{latest.cipher}</dd></div>
+                  <div><dt>Integrity</dt><dd className="mono">{shortChecksum(latest.checksum)}</dd></div>
+                </>
+              )}
             </dl>
             <div className="latest-actions">
               <button className="button secondary" type="button" onClick={() => onRestore(latest)}>
                 <ArrowDownToLine size={15} />
-                Restore via skill
+                {latest.visibility === "public" ? "Copy keyless restore" : "Restore via skill"}
               </button>
-              <button className="icon-control" type="button" aria-label={`Share ${latest.label}`} onClick={() => onShare(latest)}>
-                <Share2 size={15} />
-              </button>
+              {latest.visibility === "public" ? (
+                <button className="icon-control" type="button" aria-label={`Copy public URL for ${checkpointTitle(latest)}`} onClick={() => onCopyPublicUrl(latest)}>
+                  <Link2 size={15} />
+                </button>
+              ) : (
+                <>
+                  <button className="button secondary" type="button" onClick={() => onMakePublic(latest)}>
+                    <Globe2 size={15} />
+                    Make public
+                  </button>
+                  <button className="icon-control" type="button" aria-label={`Create expiring share for ${latest.label}`} onClick={() => onShare(latest)}>
+                    <Share2 size={15} />
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </section>
@@ -612,7 +692,7 @@ function CheckpointsView({
         <div className="section-title-row">
           <div>
             <h2>Checkpoint registry</h2>
-            <p>Relay stores ciphertext plus the agent metadata you approved or pseudonymized.</p>
+            <p>Visibility and agent-profile metadata are separate choices.</p>
           </div>
           {workspaceFilter && (
             <button className="filter-pill" type="button" onClick={onClearWorkspace}>
@@ -626,7 +706,7 @@ function CheckpointsView({
           <div className="data-table-header">
             <span>Checkpoint</span>
             <span>Agent</span>
-            <span>Contents</span>
+            <span>Visibility</span>
             <span>Created</span>
             <span />
           </div>
@@ -639,6 +719,8 @@ function CheckpointsView({
                 checkpoint={checkpoint}
                 onShare={onShare}
                 onRestore={onRestore}
+                onMakePublic={onMakePublic}
+                onCopyPublicUrl={onCopyPublicUrl}
               />
             ))
           ) : (
@@ -680,21 +762,35 @@ function Stat({
   );
 }
 
+function VisibilityBadge({ checkpoint }: { checkpoint: Checkpoint }) {
+  const isPublic = checkpoint.visibility === "public";
+  return (
+    <span className={`visibility-badge ${checkpoint.visibility}`}>
+      {isPublic ? <Globe2 size={10} aria-hidden="true" /> : <LockKeyhole size={10} aria-hidden="true" />}
+      {isPublic ? "Public" : "Private"}
+    </span>
+  );
+}
+
 function CheckpointRow({
   checkpoint,
   onShare,
   onRestore,
+  onMakePublic,
+  onCopyPublicUrl,
 }: {
   checkpoint: Checkpoint;
   onShare: (checkpoint: Checkpoint) => void;
   onRestore: (checkpoint: Checkpoint) => void;
+  onMakePublic: (checkpoint: Checkpoint) => void;
+  onCopyPublicUrl: (checkpoint: Checkpoint) => void;
 }) {
   return (
     <article className="data-row">
       <div className="entity-cell">
         <span className="entity-icon"><FileArchive size={17} /></span>
         <div>
-          <strong>{checkpoint.label}</strong>
+          <strong>{checkpointTitle(checkpoint)}</strong>
           <span className="mono"><GitBranch size={11} /> {checkpoint.id}</span>
         </div>
       </div>
@@ -709,21 +805,41 @@ function CheckpointRow({
         <span title={checkpoint.agentDescription}>{checkpoint.agentDescription}</span>
       </div>
       <div className="contents-cell">
-        <strong>{checkpoint.cipher}</strong>
-        <span>{formatBytes(checkpoint.sizeBytes)}</span>
+        <VisibilityBadge checkpoint={checkpoint} />
+        <span>
+          {checkpoint.visibility === "public"
+            ? `${formatBytes(checkpoint.publication!.sizeBytes)} · keyless`
+            : `${formatBytes(checkpoint.sizeBytes)} · ${checkpoint.cipher}`}
+        </span>
       </div>
       <time dateTime={checkpoint.createdAt}>{formatDate(checkpoint.createdAt)}</time>
       <div className="row-controls">
-        <button
-          className="icon-control"
-          type="button"
-          aria-label={`Share ${checkpoint.label}`}
-          onClick={() => onShare(checkpoint)}
-        >
-          <Share2 size={15} />
-        </button>
+        {checkpoint.visibility === "public" ? (
+          <button
+            className="icon-control"
+            type="button"
+            aria-label={`Copy public URL for ${checkpointTitle(checkpoint)}`}
+            onClick={() => onCopyPublicUrl(checkpoint)}
+          >
+            <Link2 size={15} />
+          </button>
+        ) : (
+          <>
+            <button
+              className="icon-control"
+              type="button"
+              aria-label={`Create expiring share for ${checkpoint.label}`}
+              onClick={() => onShare(checkpoint)}
+            >
+              <Share2 size={15} />
+            </button>
+            <button className="button row-button" type="button" onClick={() => onMakePublic(checkpoint)}>
+              Make public
+            </button>
+          </>
+        )}
         <button className="button row-button" type="button" onClick={() => onRestore(checkpoint)}>
-          Restore via skill
+          {checkpoint.visibility === "public" ? "Keyless restore" : "Restore"}
         </button>
       </div>
     </article>
@@ -761,7 +877,7 @@ function WorkspacesView({
       <PageHeading
         eyebrow="Registry"
         title="Workspaces"
-        description="Workspace names stay inside encrypted checkpoints; Relay groups them as private."
+        description="Workspace grouping follows the source checkpoint; a publication exposes only its separately approved public title and description."
       />
 
       <section className="workspace-list">
@@ -809,68 +925,133 @@ function WorkspacesView({
 function SharedView({
   checkpoints,
   onShare,
+  onRestore,
+  onMakePublic,
+  onCopyPublicUrl,
 }: {
   checkpoints: Checkpoint[];
   onShare: (checkpoint: Checkpoint) => void;
+  onRestore: (checkpoint: Checkpoint) => void;
+  onMakePublic: (checkpoint: Checkpoint) => void;
+  onCopyPublicUrl: (checkpoint: Checkpoint) => void;
 }) {
+  const publicCheckpoints = checkpoints.filter(
+    (checkpoint) => checkpoint.visibility === "public",
+  );
+  const privateCheckpoints = checkpoints.filter(
+    (checkpoint) => checkpoint.visibility === "private",
+  );
+
   return (
     <div className="view-container">
       <PageHeading
         eyebrow="Collaboration"
-        title="Shared links"
-        description="Create an expiring link with no encryption key inside it."
+        title="Sharing"
+        description="Permanent public checkpoints and expiring private shares have different security boundaries."
       />
 
-      <section className="security-note">
+      <section className="security-note public-boundary">
         <div className="security-icon"><ShieldCheck size={20} /></div>
         <div>
-          <h2>Relay never receives the decryption key.</h2>
+          <h2>Private links expire. Public checkpoints do not.</h2>
           <p>
-            Send the link and recovery key separately. Restore uses a protected key
-            file or a hidden local prompt, then verifies every path and file hash.
-            The approved or pseudonymous agent profile accompanies the checkpoint.
+            A private share still needs its separately delivered recovery key. A public
+            checkpoint is an intentionally readable, keyless artifact at a stable
+            anonymous URL. Publishing is effectively irreversible.
           </p>
         </div>
         <div className="security-facts">
-          <span><Check size={13} /> No key in link</span>
-          <span><Check size={13} /> No Relay key storage</span>
-          <span><Check size={13} /> Verified restore</span>
+          <span><LockKeyhole size={13} /> Private: encrypted</span>
+          <span><Globe2 size={13} /> Public: readable</span>
+          <span><Check size={13} /> Both: verified restore</span>
         </div>
       </section>
 
-      <section className="registry-section">
-        <div className="section-title-row">
-          <div>
-            <h2>Ready to share</h2>
-            <p>Generate a link, then provide the encryption key separately.</p>
+      <div className="sharing-grid">
+        <section className="registry-section">
+          <div className="section-title-row">
+            <div>
+              <h2>Permanent public checkpoints</h2>
+              <p>Anyone with the stable URL can inspect and restore these without a key or sign-in.</p>
+            </div>
           </div>
-        </div>
-        <div className="share-table">
-          {checkpoints.length ? (
-            checkpoints.map((checkpoint) => (
-              <article key={checkpoint.id}>
-                <div className="entity-cell">
-                  <span className="entity-icon"><Link2 size={16} /></span>
-                  <div>
-                    <strong>{checkpoint.label}</strong>
-                    <span>{checkpoint.workspaceName} · {formatDate(checkpoint.createdAt)}</span>
+          <div className="share-table public-share-table">
+            {publicCheckpoints.length ? (
+              publicCheckpoints.map((checkpoint) => (
+                <article key={checkpoint.id}>
+                  <div className="entity-cell">
+                    <span className="entity-icon public"><Globe2 size={16} /></span>
+                    <div>
+                      <strong>{checkpointTitle(checkpoint)}</strong>
+                      <span>{checkpoint.publication!.description}</span>
+                    </div>
                   </div>
-                </div>
-                <span className="mono">{checkpoint.id}</span>
-                <button className="button secondary" type="button" onClick={() => onShare(checkpoint)}>
-                  <Copy size={14} />
-                  Copy share command
-                </button>
-              </article>
-            ))
-          ) : (
-            <EmptyState
-              title="Nothing to share yet"
-              description="Upload a checkpoint before creating a share link."
-            />
-          )}
-        </div>
-      </section>
+                  <span className="mono" title={publicDownloadPath(checkpoint)}>
+                    {publicDownloadPath(checkpoint)}
+                  </span>
+                  <div className="share-actions">
+                    <button className="button secondary" type="button" onClick={() => onCopyPublicUrl(checkpoint)}>
+                      <Link2 size={14} />
+                      Copy public URL
+                    </button>
+                    <button className="button secondary" type="button" onClick={() => onRestore(checkpoint)}>
+                      <ArrowDownToLine size={14} />
+                      Keyless restore
+                    </button>
+                  </div>
+                </article>
+              ))
+            ) : (
+              <EmptyState
+                title="No public checkpoints"
+                description="Make a private checkpoint public locally, or create a new checkpoint as public."
+              />
+            )}
+          </div>
+        </section>
+
+        <section className="registry-section">
+          <div className="section-title-row">
+            <div>
+              <h2>Private expiring shares</h2>
+              <p>The link contains no key. Send the recovery key through a separate secure channel.</p>
+            </div>
+          </div>
+          <div className="share-table private-share-table">
+            {privateCheckpoints.length ? (
+              privateCheckpoints.map((checkpoint) => (
+                <article key={checkpoint.id}>
+                  <div className="entity-cell">
+                    <span className="entity-icon"><LockKeyhole size={16} /></span>
+                    <div>
+                      <strong>{checkpoint.label}</strong>
+                      <span>
+                        {checkpoint.workspaceName} · {formatDate(checkpoint.createdAt)}
+                      </span>
+                    </div>
+                  </div>
+                  <span className="mono">{checkpoint.id}</span>
+                  <div className="share-actions">
+                    <button className="button secondary" type="button" onClick={() => onShare(checkpoint)}>
+                      <Copy size={14} />
+                      Expiring share
+                    </button>
+                    <button className="button secondary" type="button" onClick={() => onMakePublic(checkpoint)}>
+                      <Globe2 size={14} />
+                      Make public
+                    </button>
+                  </div>
+                </article>
+              ))
+            ) : (
+              <EmptyState
+                title="No private checkpoints"
+                description="New private checkpoints will appear here for expiring sharing."
+              />
+            )}
+          </div>
+        </section>
+      </div>
     </div>
   );
 }
@@ -974,9 +1155,9 @@ Relay URL: ${origin}
 4. Install or update only those folders in this project. Preserve unrelated skills, and ask before replacing locally modified Relay skill files.
 5. Read both SKILL.md files.
 6. Stop after installation. Do not sign in, connect an account, create a checkpoint, upload, download, decrypt, or restore anything yet.`;
-  const createPrompt = `Use $agent-workspace-checkpoint to create and upload an encrypted checkpoint of the current project labeled "ready-for-handoff".
+  const createPrompt = `Use $agent-workspace-checkpoint to create and upload a Relay checkpoint of the current project labeled "ready-for-handoff".
 
-If the Relay credential is missing or expired, let the skill open the approval page once, then verify the credential through Relay's API without opening the dashboard. Run all commands yourself. Before creating it, ask me two things in one short question: whether to generate and securely save a recovery key for me (recommended/default, with no terminal input) or let me enter my own key privately once; and whether Relay may display a name and one-sentence summary of what this agent did. If I decline agent metadata or do not choose, generate a playful pseudonym and use a generic privacy-safe description. Show me shared metadata before uploading it. Never include secrets, private paths, code, or workspace details in agent metadata. Upload in small authenticated chunks and verify completion through Relay's API. Never reveal a generated key or ask me to put a key in chat.`;
+If the Relay credential is missing or expired, let the skill open the approval page once, then verify the credential through Relay's API without opening the dashboard. Run all commands yourself. First ask whether this checkpoint should be private (recommended/default) or public. For private, ask whether to generate and securely save a recovery key or let me enter one once through a hidden local prompt. For public, do not create or request a key; ask locally for a public title and description, show the complete public preview, warn that publication is effectively irreversible, and require explicit confirmation. Also ask whether Relay may display a name and one-sentence summary of what this agent did; otherwise use a playful pseudonym and generic privacy-safe description. Never include secrets, private paths, code, or unapproved workspace details in public or agent metadata. Upload in small authenticated chunks and verify completion through Relay's API. Never reveal a generated key or ask me to put a key in chat or a browser.`;
   const restorePrompt = `Use $restore-agent-workspace to download Relay checkpoint cp_EXAMPLE. Before doing anything else, ask whether I want to merge it into the current agent workspace or restore it into a separate new workspace. Do not default to either mode.
 
 If the Relay credential is missing or expired, let the skill open the approval page once, then verify the credential through Relay's API without opening the dashboard. Run all commands yourself. Use the protected locally saved recovery key when available. Ask for a key through the hidden local prompt only if no safe key file is available, and never ask me to put a key in chat.`;
@@ -1009,8 +1190,9 @@ If the Relay credential is missing or expired, let the skill open the approval p
             <p>
               Installation is public and needs no account. When you later ask
               to upload or restore, the skill starts the required browser
-              approval if needed. The separate encryption key stays local, and
-              agent metadata is shared only with approval or replaced by a playful alias.
+              approval if needed. Private checkpoint keys stay local. Public
+              checkpoints use no key because their approved artifacts are intentionally
+              readable. Agent metadata remains a separate sharing choice.
             </p>
           </div>
 
@@ -1037,7 +1219,7 @@ If the Relay credential is missing or expired, let the skill open the approval p
                 <span>2</span>
                 <div>
                   <h3>Ask the creation skill</h3>
-                  <p>The skill signs in if needed, generates a key by default, and uploads ciphertext in API chunks.</p>
+                  <p>Choose private ciphertext or an intentionally readable public artifact. Private remains the default.</p>
                 </div>
                 <UploadCloud size={17} />
               </div>
@@ -1070,7 +1252,7 @@ If the Relay credential is missing or expired, let the skill open the approval p
         </div>
 
         <footer className="modal-footer">
-          <span><ShieldCheck size={14} /> Agent-operated · Browser-approved · Locally keyed</span>
+          <span><ShieldCheck size={14} /> Agent-operated · Browser-approved · Visibility-explicit</span>
           <button className="button primary" type="button" onClick={onClose}>Done</button>
         </footer>
       </section>
@@ -1121,7 +1303,33 @@ async function shareCheckpoint(
       "python3 .agents/skills/agent-workspace-checkpoint/scripts/create_share.py " +
         `--checkpoint ${checkpoint.id}`,
     );
-    setToast("Keyless share command copied.");
+    setToast("Private expiring-share command copied.");
+  } catch {
+    setToast("Clipboard access is unavailable.");
+  }
+}
+
+async function copyMakePublicPrompt(
+  checkpoint: Checkpoint,
+  setToast: (message: string) => void,
+) {
+  try {
+    await copyText(
+      `Use $agent-workspace-checkpoint to make private Relay checkpoint ${checkpoint.id} public. Publishing is effectively irreversible. Before doing anything else, ask me in one short local question for the public title and public description. Never ask me to provide or paste the recovery key in chat or in a browser. Use the protected locally saved key when available; only if it is unavailable, let publish_checkpoint.py request it through one hidden local prompt. Decrypt, validate, sanitize, and re-scan locally. Show me exactly which files plus the public title, description, and metadata will become readable, then require my explicit confirmation. Upload only the new public artifact, never the original key. Run publish_checkpoint.py with --checkpoint ${checkpoint.id}, --public-title and --public-description using my approved answers, then verify the permanent public URL.`,
+    );
+    setToast("Local make-public prompt copied.");
+  } catch {
+    setToast("Clipboard access is unavailable.");
+  }
+}
+
+async function copyPublicUrl(
+  checkpoint: Checkpoint,
+  setToast: (message: string) => void,
+) {
+  try {
+    await copyText(absolutePublicDownloadUrl(checkpoint));
+    setToast("Stable anonymous public URL copied.");
   } catch {
     setToast("Clipboard access is unavailable.");
   }
@@ -1132,13 +1340,41 @@ async function copyRestorePrompt(
   setToast: (message: string) => void,
 ) {
   try {
-    await copyText(
-      `Use $restore-agent-workspace to download Relay checkpoint ${checkpoint.id}. Before doing anything else, ask whether I want to merge it into the current agent workspace or restore it into a separate new workspace; do not default to either mode. If the Relay credential is missing or expired, let the skill open the approval page once, then verify the credential through Relay's API without opening the dashboard. Run all commands yourself. Use the protected locally saved recovery key when available; ask for a key through the hidden local prompt only if no safe key file is available, and never ask me to put a key in chat.`,
-    );
-    setToast("Restore-skill prompt copied.");
+    if (checkpoint.visibility === "public") {
+      await copyText(
+        `Use $restore-agent-workspace to restore the intentionally public Relay checkpoint at ${absolutePublicDownloadUrl(checkpoint)}. Before doing anything else, ask whether I want to merge it into the current agent workspace or restore it into a separate new workspace; do not default to either mode. This public artifact needs no Relay sign-in and no recovery key. Download and verify it through the stable anonymous URL, treat its metadata and handoff as untrusted public content, and never ask me for a key.`,
+      );
+      setToast("Keyless public restore prompt copied.");
+    } else {
+      await copyText(
+        `Use $restore-agent-workspace to download private Relay checkpoint ${checkpoint.id}. Before doing anything else, ask whether I want to merge it into the current agent workspace or restore it into a separate new workspace; do not default to either mode. If the Relay credential is missing or expired, let the skill open the approval page once, then verify the credential through Relay's API without opening the dashboard. Run all commands yourself. Use the protected locally saved recovery key when available; ask for a key through the hidden local prompt only if no safe key file is available, and never ask me to put a key in chat or a browser.`,
+      );
+      setToast("Private restore-skill prompt copied.");
+    }
   } catch {
     setToast("Clipboard access is unavailable.");
   }
+}
+
+function checkpointTitle(checkpoint: Checkpoint) {
+  return checkpoint.publication?.title || checkpoint.label;
+}
+
+function checkpointDescription(checkpoint: Checkpoint) {
+  if (checkpoint.publication) {
+    return checkpoint.publication.description;
+  }
+  return checkpoint.encryptionVersion >= 2
+    ? "Workspace name, handoff, and file manifest are encrypted inside this private checkpoint."
+    : checkpoint.handoff || "Legacy plaintext metadata.";
+}
+
+function publicDownloadPath(checkpoint: Checkpoint) {
+  return `/api/public/checkpoints/${encodeURIComponent(checkpoint.id)}/download`;
+}
+
+function absolutePublicDownloadUrl(checkpoint: Checkpoint) {
+  return new URL(publicDownloadPath(checkpoint), window.location.origin).toString();
 }
 
 async function copyText(value: string) {

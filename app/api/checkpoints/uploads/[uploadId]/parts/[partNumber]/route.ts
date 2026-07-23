@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { authenticateApiToken, getRuntimeEnv } from "@/db/checkpoints";
 import {
+  authenticateApiToken,
+  getRuntimeEnv,
+  hasCheckpointScopes,
+} from "@/db/checkpoints";
+import {
+  isPublicUploadSession,
   loadUploadSession,
   uploadPartKey,
 } from "@/lib/checkpoint-objects";
@@ -11,7 +16,7 @@ export async function PUT(
   request: NextRequest,
   context: { params: Promise<{ uploadId: string; partNumber: string }> },
 ) {
-  const credential = await authenticateApiToken(request, "checkpoints:write");
+  const credential = await authenticateApiToken(request);
   if (!credential) {
     return NextResponse.json(
       { error: "A valid Relay agent credential is required." },
@@ -24,6 +29,16 @@ export async function PUT(
   const session = await loadUploadSession(storage, uploadId);
   if (!session || session.tenantId !== credential.tenantId) {
     return NextResponse.json({ error: "Upload session not found." }, { status: 404 });
+  }
+  if (
+    !hasCheckpointScopes(credential, "checkpoints:write") ||
+    (isPublicUploadSession(session) &&
+      !hasCheckpointScopes(credential, "checkpoints:publish"))
+  ) {
+    return NextResponse.json(
+      { error: "This Relay agent credential lacks the required checkpoint scope." },
+      { status: 403 },
+    );
   }
   if (session.status !== "pending") {
     return NextResponse.json({ error: "Upload is already complete." }, { status: 409 });
@@ -64,6 +79,7 @@ export async function PUT(
         sha256: digest,
         customMetadata: {
           checkpointId: session.checkpointId,
+          operation: session.operation ?? "create-private",
           partNumber: String(partNumber),
           sha256: checksum,
         },

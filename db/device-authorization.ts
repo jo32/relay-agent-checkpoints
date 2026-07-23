@@ -1,4 +1,7 @@
 import {
+  CHECKPOINT_SCOPES,
+  CheckpointScope,
+  DEFAULT_TOKEN_SCOPES,
   getRuntimeEnv,
   hashToken,
   issueApiToken,
@@ -11,11 +14,14 @@ const USER_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 type DeviceAuthorizationRow = {
   clientName: string;
+  requestedScopes: string;
   status: string;
   tenantId: string | null;
   userId: string | null;
   expiresAt: string;
 };
+
+export class InvalidDeviceScopeError extends Error {}
 
 export type DeviceExchangeResult =
   | {
@@ -33,9 +39,13 @@ export type DeviceExchangeResult =
         | "invalid_grant";
     };
 
-export async function createDeviceAuthorization(clientName: string) {
+export async function createDeviceAuthorization(
+  clientName: string,
+  requestedScopes?: readonly string[],
+) {
   const { DB } = getRuntimeEnv();
   await ensureRelaySchema(DB);
+  const scopes = resolveDeviceScopes(requestedScopes);
   const deviceCode = `rdc_${randomHex(32)}`;
   const userCode = createUserCode();
   const now = new Date();
@@ -46,13 +56,14 @@ export async function createDeviceAuthorization(clientName: string) {
     ).bind(new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString()),
     DB.prepare(
       `INSERT INTO device_authorizations (
-        device_code_hash, user_code_hash, client_name, status,
+        device_code_hash, user_code_hash, client_name, requested_scopes, status,
         tenant_id, user_id, created_at, expires_at, approved_at, consumed_at
-      ) VALUES (?, ?, ?, 'pending', NULL, NULL, ?, ?, NULL, NULL)`,
+      ) VALUES (?, ?, ?, ?, 'pending', NULL, NULL, ?, ?, NULL, NULL)`,
     ).bind(
       await hashToken(deviceCode),
       await hashToken(normalizeUserCode(userCode)),
       clientName,
+      scopes.join(" "),
       now.toISOString(),
       expiresAt,
     ),
@@ -63,6 +74,7 @@ export async function createDeviceAuthorization(clientName: string) {
     expiresAt,
     expiresIn: Math.floor(DEVICE_TTL_MS / 1000),
     interval: POLL_INTERVAL_SECONDS,
+    scopes,
   };
 }
 
@@ -72,16 +84,26 @@ export async function findDeviceAuthorization(userCode: string) {
   const { DB } = getRuntimeEnv();
   await ensureRelaySchema(DB);
   const record = await DB.prepare(
-    `SELECT client_name AS clientName, status, expires_at AS expiresAt
+    `SELECT
+      client_name AS clientName,
+      requested_scopes AS requestedScopes,
+      status,
+      expires_at AS expiresAt
     FROM device_authorizations
     WHERE user_code_hash = ?
     LIMIT 1`,
   )
     .bind(await hashToken(normalized))
-    .first<Pick<DeviceAuthorizationRow, "clientName" | "status" | "expiresAt">>();
+    .first<
+      Pick<
+        DeviceAuthorizationRow,
+        "clientName" | "requestedScopes" | "status" | "expiresAt"
+      >
+    >();
   if (!record) return null;
   return {
     ...record,
+    scopes: resolveDeviceScopes(record.requestedScopes.split(/\s+/)),
     userCode: formatUserCode(normalized),
     expired: record.expiresAt <= new Date().toISOString(),
   };
@@ -129,6 +151,7 @@ export async function exchangeDeviceCode(
   const record = await DB.prepare(
     `SELECT
       client_name AS clientName,
+      requested_scopes AS requestedScopes,
       status,
       tenant_id AS tenantId,
       user_id AS userId,
@@ -175,6 +198,7 @@ export async function exchangeDeviceCode(
       record.tenantId,
       record.userId,
       `Device sign-in: ${record.clientName}`,
+      resolveDeviceScopes(record.requestedScopes.split(/\s+/)),
     );
     await DB.prepare(
       `UPDATE device_authorizations
@@ -199,6 +223,26 @@ export async function exchangeDeviceCode(
       .run();
     throw error;
   }
+}
+
+function resolveDeviceScopes(
+  requestedScopes?: readonly string[],
+): CheckpointScope[] {
+  const requested =
+    requestedScopes && requestedScopes.length > 0
+      ? [...new Set(requestedScopes.filter(Boolean))]
+      : [...DEFAULT_TOKEN_SCOPES];
+  if (
+    requested.some(
+      (scope) => !CHECKPOINT_SCOPES.includes(scope as CheckpointScope),
+    ) ||
+    DEFAULT_TOKEN_SCOPES.some((scope) => !requested.includes(scope))
+  ) {
+    throw new InvalidDeviceScopeError(
+      "Relay device authorization requested an invalid scope set.",
+    );
+  }
+  return CHECKPOINT_SCOPES.filter((scope) => requested.includes(scope));
 }
 
 export async function revokeAccessToken(token: string) {

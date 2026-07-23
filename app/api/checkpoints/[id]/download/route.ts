@@ -7,6 +7,7 @@ import {
 import { getCurrentPrincipal } from "../../../../../lib/principal";
 import { openCheckpointArchive } from "../../../../../lib/checkpoint-objects";
 import { agentMetadataHeaders } from "../../../../../lib/agent-metadata";
+import { PUBLIC_CHECKPOINT_CONTENT_TYPE } from "../../../../../lib/public-checkpoint";
 
 export const dynamic = "force-dynamic";
 
@@ -47,7 +48,9 @@ export async function GET(
     headers: {
       "content-type": encrypted
         ? "application/vnd.relay.checkpoint"
-        : "application/gzip",
+        : checkpoint.encryptionVersion === 0
+          ? PUBLIC_CHECKPOINT_CONTENT_TYPE
+          : "application/gzip",
       "content-disposition": `attachment; filename="${filename}"`,
       "content-length": String(archive.size),
       "x-checkpoint-sha256": checkpoint.checksum,

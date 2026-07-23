@@ -22,24 +22,68 @@ def upload_checkpoint(
     api_token: str,
     checkpoint_id: str,
     checksum: str,
-    agent_metadata: dict[str, str],
+    agent_metadata: dict[str, str] | None,
+    operation: str = "create-private",
+    public_metadata: dict[str, str] | None = None,
+    source_ciphertext_checksum: str | None = None,
 ) -> dict[str, object]:
+    if operation not in {
+        "create-private",
+        "create-public",
+        "publish-existing",
+    }:
+        raise RelayUploadError("Checkpoint upload operation is invalid")
+    public = operation != "create-private"
+    if public and (
+        not public_metadata
+        or not public_metadata.get("title")
+        or not public_metadata.get("description")
+    ):
+        raise RelayUploadError(
+            "Public checkpoint upload requires a title and description"
+        )
+    if operation == "publish-existing" and not source_ciphertext_checksum:
+        raise RelayUploadError(
+            "Publishing an existing checkpoint requires its ciphertext checksum"
+        )
+    if operation != "publish-existing" and source_ciphertext_checksum:
+        raise RelayUploadError("Source checksum is valid only when publishing")
+    if operation != "publish-existing" and not agent_metadata:
+        raise RelayUploadError("Checkpoint upload requires agent metadata")
+
     endpoint = api_url.rstrip("/")
     size_bytes = archive_path.stat().st_size
+    payload: dict[str, object] = {
+        "operation": operation,
+        "checkpointId": checkpoint_id,
+        "checksum": checksum,
+        "encryptionVersion": 0 if public else 2,
+        "cipher": "none" if public else "AES-256-GCM",
+        "sizeBytes": size_bytes,
+    }
+    if agent_metadata:
+        payload.update(
+            {
+                "agentName": agent_metadata["name"],
+                "agentDescription": agent_metadata["description"],
+                "agentMetadataMode": agent_metadata["mode"],
+            }
+        )
+    if public_metadata:
+        payload.update(
+            {
+                "publicFormatVersion": 1,
+                "publicTitle": public_metadata["title"],
+                "publicDescription": public_metadata["description"],
+            }
+        )
+    if source_ciphertext_checksum:
+        payload["sourceCiphertextChecksum"] = source_ciphertext_checksum
     initialized = request_json(
         "POST",
         f"{endpoint}/api/checkpoints/uploads",
         api_token,
-        payload={
-            "checkpointId": checkpoint_id,
-            "checksum": checksum,
-            "encryptionVersion": 2,
-            "cipher": "AES-256-GCM",
-            "sizeBytes": size_bytes,
-            "agentName": agent_metadata["name"],
-            "agentDescription": agent_metadata["description"],
-            "agentMetadataMode": agent_metadata["mode"],
-        },
+        payload=payload,
     )
     upload_id = str(initialized.get("uploadId", ""))
     chunk_size = initialized.get("chunkSize")
@@ -106,7 +150,32 @@ def upload_checkpoint(
         if (
             not isinstance(verified_checkpoint, dict)
             or verified_checkpoint.get("id") != checkpoint_id
-            or str(verified_checkpoint.get("checksum", "")).lower()
+        ):
+            raise RelayUploadError("Relay API could not verify the stored checkpoint")
+        if public:
+            publication = verified_checkpoint.get("publication")
+            if (
+                verified_checkpoint.get("visibility") != "public"
+                or not isinstance(publication, dict)
+                or str(publication.get("checksum", "")).lower()
+                != checksum.lower()
+                or publication.get("sizeBytes") != size_bytes
+                or publication.get("title") != public_metadata["title"]
+                or publication.get("description")
+                != public_metadata["description"]
+                or (
+                    operation == "publish-existing"
+                    and str(
+                        publication.get("sourceCiphertextChecksum", "")
+                    ).lower()
+                    != str(source_ciphertext_checksum).lower()
+                )
+            ):
+                raise RelayUploadError(
+                    "Relay API could not verify the public checkpoint"
+                )
+        elif (
+            str(verified_checkpoint.get("checksum", "")).lower()
             != checksum.lower()
             or verified_checkpoint.get("sizeBytes") != size_bytes
             or verified_checkpoint.get("agentName") != agent_metadata["name"]

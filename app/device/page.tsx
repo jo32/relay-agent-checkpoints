@@ -65,6 +65,7 @@ export default async function DevicePage({
           <DeviceApproval
             userCode={authorization.userCode}
             clientName={authorization.clientName}
+            scopes={authorization.scopes}
           />
         )}
 

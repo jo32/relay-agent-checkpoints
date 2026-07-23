@@ -56,6 +56,8 @@ class SkillBundleTests(unittest.TestCase):
 
         self.assertIn("Never ask the user to run an authentication command", create_skill)
         self.assertIn("relay_auth.py login", create_skill)
+        self.assertIn("relay_auth.py login --api-url \"$RELAY_API_URL\" --publish", create_skill)
+        self.assertIn("checkpoints:publish", create_skill)
         self.assertIn("Connect to Relay as described above", create_skill)
         self.assertIn("/api/agent/status", create_skill)
         self.assertIn("uploads in chunks", create_skill)

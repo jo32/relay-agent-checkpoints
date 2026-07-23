@@ -31,6 +31,11 @@ def parse_args() -> argparse.Namespace:
         command.add_argument("--json", action="store_true", dest="json_output")
         if name == "login":
             command.add_argument("--no-browser", action="store_true")
+            command.add_argument(
+                "--publish",
+                action="store_true",
+                help="Request the irreversible public-checkpoint permission",
+            )
     return parser.parse_args()
 
 
@@ -41,7 +46,12 @@ def main() -> int:
     try:
         api_url = normalize_api_url(args.api_url)
         if args.command == "login":
-            return login(api_url, args.no_browser, args.json_output)
+            return login(
+                api_url,
+                args.no_browser,
+                args.json_output,
+                args.publish,
+            )
         if args.command == "status":
             return show_status(api_url, args.json_output)
         return logout(api_url, args.json_output)
@@ -49,10 +59,24 @@ def main() -> int:
         raise SystemExit(str(error)) from error
 
 
-def login(api_url: str, no_browser: bool, json_output: bool) -> int:
+def login(
+    api_url: str,
+    no_browser: bool,
+    json_output: bool,
+    publish: bool,
+) -> int:
+    requested_scopes = [
+        "checkpoints:read",
+        "checkpoints:write",
+        "checkpoints:share",
+        *(["checkpoints:publish"] if publish else []),
+    ]
     status, authorization = request_json(
         f"{api_url}/api/device/authorize",
-        {"client_name": "Relay checkpoint skills"},
+        {
+            "client_name": "Relay checkpoint skills",
+            "scope": " ".join(requested_scopes),
+        },
     )
     if status != 201:
         raise SystemExit(
@@ -100,6 +124,11 @@ def login(api_url: str, no_browser: bool, json_output: bool) -> int:
             token = str(token_payload.get("access_token", ""))
             expires_at = str(token_payload.get("expires_at", ""))
             scopes = str(token_payload.get("scope", ""))
+            granted_scopes = set(scopes.split())
+            if not set(requested_scopes).issubset(granted_scopes):
+                raise SystemExit(
+                    "Relay issued a credential without the requested permissions"
+                )
             remote_status, remote_payload = request_get_json(
                 f"{api_url}/api/agent/status",
                 token,

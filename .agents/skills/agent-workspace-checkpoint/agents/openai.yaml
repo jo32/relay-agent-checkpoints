@@ -1,4 +1,4 @@
 interface:
   display_name: "Agent Workspace Checkpoint"
-  short_description: "Encrypt checkpoints with optional agent profiles"
-  default_prompt: "Use $agent-workspace-checkpoint to connect to Relay if needed, ask whether to share a concise agent name and work summary or use a playful pseudonym, then create, locally encrypt, and upload a sanitized checkpoint of this project for handoff."
+  short_description: "Create private or public Relay checkpoints"
+  default_prompt: "Use $agent-workspace-checkpoint to ask whether this checkpoint should remain private or become intentionally public. Keep private as the default. Public mode requires an approved title and description and no key; private-to-public publication must decrypt and sanitize locally without ever sending the original recovery key to Relay."

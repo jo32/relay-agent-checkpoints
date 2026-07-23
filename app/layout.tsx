@@ -16,32 +16,32 @@ export async function generateMetadata(): Promise<Metadata> {
 
   return {
     title: {
-      default: "Relay — Encrypted checkpoints for agent workspaces.",
+      default: "Relay — Private or public checkpoints for agent workspaces.",
       template: "%s · Relay",
     },
     description:
-      "Capture, encrypt, and restore AI agent workspaces without exposing source files, workspace context, or recovery keys to Relay.",
+      "Keep agent workspace checkpoints locally encrypted, or intentionally publish a sanitized artifact for stable, keyless restore.",
     icons: {
       icon: "/favicon.svg",
       shortcut: "/favicon.svg",
     },
     openGraph: {
-      title: "Relay — Encrypted checkpoints for agent workspaces.",
-      description: "Locally encrypted, zero-knowledge checkpoints with verified restore.",
+      title: "Relay — Private or public checkpoints for agent workspaces.",
+      description: "Private ciphertext by default, intentionally readable public artifacts when you choose.",
       type: "website",
       images: [
         {
           url: socialImage,
           width: 1536,
           height: 1024,
-          alt: "Relay — locally encrypted checkpoints for agent workspaces",
+          alt: "Relay — private or public checkpoints for agent workspaces",
         },
       ],
     },
     twitter: {
       card: "summary_large_image",
-      title: "Relay — Encrypted checkpoints for agent workspaces.",
-      description: "Locally encrypted, zero-knowledge checkpoints with verified restore.",
+      title: "Relay — Private or public checkpoints for agent workspaces.",
+      description: "Private ciphertext by default, intentionally readable public artifacts when you choose.",
       images: [socialImage],
     },
   };

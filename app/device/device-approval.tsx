@@ -6,13 +6,16 @@ import { useState } from "react";
 export default function DeviceApproval({
   userCode,
   clientName,
+  scopes,
 }: {
   userCode: string;
   clientName: string;
+  scopes: string[];
 }) {
   const [pending, setPending] = useState<"approve" | "deny" | null>(null);
   const [result, setResult] = useState<"approved" | "denied" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const canPublish = scopes.includes("checkpoints:publish");
 
   async function decide(decision: "approve" | "deny") {
     setPending(decision);
@@ -61,8 +64,15 @@ export default function DeviceApproval({
         {userCode}
       </div>
       <p className="device-scope">
-        This permits encrypted checkpoint upload, download, and share-link creation.
-        It never grants access to your local encryption key.
+        This permits private checkpoint upload, download, and expiring share-link
+        creation. It never grants access to your local encryption key.
+        {canPublish && (
+          <>
+            {" "}It also permits creating permanent public checkpoints and making
+            your own private checkpoints publicly readable. Public disclosure is
+            effectively irreversible.
+          </>
+        )}
       </p>
       <div className="device-actions">
         <button

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { gzipSync } from "node:zlib";
 import test, { after, before } from "node:test";
 
 const port = 4178;
@@ -46,19 +47,216 @@ async function render() {
   return fetch(origin, { headers: { accept: "text/html" } });
 }
 
+function publicCheckpointArchive(
+  checkpointId,
+  title,
+  description,
+  additionalEntries = [],
+) {
+  const source = Buffer.from("public checkpoint content\n");
+  const sourceDigest = createHash("sha256").update(source).digest("hex");
+  const treeMaterial = Buffer.from(`README.md\0${sourceDigest}\n`);
+  const manifest = Buffer.from(
+    `${JSON.stringify(
+      {
+        formatVersion: 2,
+        visibility: "public",
+        checkpointId,
+        createdAt: "2026-07-23T00:00:00.000Z",
+        workspace: "Public workspace",
+        root: ".",
+        label: title,
+        sourceAgent: "Rendered HTML test agent",
+        baseSnapshot: null,
+        treeHash: `sha256:${createHash("sha256").update(treeMaterial).digest("hex")}`,
+        stacks: ["Test"],
+        git: { isRepository: false },
+        files: [
+          {
+            path: "README.md",
+            size: source.length,
+            mode: 0o644,
+            sha256: `sha256:${sourceDigest}`,
+          },
+        ],
+        exclusions: [],
+        publication: { title, description },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  const handoff = Buffer.from(`# ${title}\n\n${description}\n`);
+  const archive = Buffer.concat([
+    tarEntry("././@PaxHeader", paxRecord("path", "README.md"), "x"),
+    tarEntry("PaxPath", source),
+    ...additionalEntries.flatMap(({ name, data, pax }) =>
+      pax
+        ? [
+            tarEntry("././@PaxHeader", paxRecord("path", name), "x"),
+            tarEntry("PaxPath", Buffer.from(data)),
+          ]
+        : [tarEntry(name, Buffer.from(data))],
+    ),
+    tarEntry(".agent-checkpoint/manifest.json", manifest),
+    tarEntry(".agent-checkpoint/HANDOFF.md", handoff),
+    Buffer.alloc(1024),
+  ]);
+  return gzipSync(archive, { level: 9 });
+}
+
+function tarEntry(name, data, type = "0") {
+  const header = Buffer.alloc(512);
+  header.write(name, 0, 100, "utf8");
+  writeTarOctal(header, 100, 8, 0o644);
+  writeTarOctal(header, 108, 8, 0);
+  writeTarOctal(header, 116, 8, 0);
+  writeTarOctal(header, 124, 12, data.length);
+  writeTarOctal(header, 136, 12, 0);
+  header.fill(0x20, 148, 156);
+  header[156] = type.charCodeAt(0);
+  header.write("ustar\0", 257, 6, "ascii");
+  header.write("00", 263, 2, "ascii");
+  const checksum = header.reduce((total, byte) => total + byte, 0);
+  const encodedChecksum = checksum.toString(8).padStart(6, "0");
+  header.write(encodedChecksum, 148, 6, "ascii");
+  header[154] = 0;
+  header[155] = 0x20;
+  const padding = Buffer.alloc((512 - (data.length % 512)) % 512);
+  return Buffer.concat([header, data, padding]);
+}
+
+function paxRecord(key, value) {
+  const body = `${key}=${value}\n`;
+  let length = Buffer.byteLength(body) + 3;
+  while (true) {
+    const record = Buffer.from(`${length} ${body}`);
+    if (record.length === length) return record;
+    length = record.length;
+  }
+}
+
+function writeTarOctal(buffer, offset, length, value) {
+  const encoded = value.toString(8).padStart(length - 1, "0");
+  buffer.write(encoded, offset, length - 1, "ascii");
+  buffer[offset + length - 1] = 0;
+}
+
+function encryptedCheckpointArchive(checkpointId, payloadBytes = 4096) {
+  const encryptedHeader = Buffer.from(JSON.stringify({
+    formatVersion: 2,
+    cipher: "AES-256-GCM",
+    checkpointId,
+    nonce: "A".repeat(16),
+  }));
+  const headerLength = Buffer.alloc(4);
+  headerLength.writeUInt32BE(encryptedHeader.length);
+  return Buffer.concat([
+    Buffer.from("RELAYCP2\n"),
+    headerLength,
+    encryptedHeader,
+    Buffer.alloc(payloadBytes, 0x5a),
+  ]);
+}
+
+async function uploadCheckpointArchive(
+  accessToken,
+  metadata,
+  archive,
+  expectedCompletionStatus,
+) {
+  const initialized = await stageCheckpointArchive(
+    accessToken,
+    metadata,
+    archive,
+  );
+  const completeResponse = await fetch(
+    `${origin}/api/checkpoints/uploads/${initialized.uploadId}/complete`,
+    {
+      method: "POST",
+      headers: { authorization: `Bearer ${accessToken}` },
+    },
+  );
+  if (expectedCompletionStatus !== undefined) {
+    assert.equal(completeResponse.status, expectedCompletionStatus);
+    return {
+      initialized,
+      completionStatus: completeResponse.status,
+      completed: await completeResponse.json(),
+    };
+  }
+  assert.ok(
+    completeResponse.status === 200 || completeResponse.status === 201,
+    `upload completion failed (${completeResponse.status}): ${await completeResponse
+      .clone()
+      .text()}`,
+  );
+  return {
+    initialized,
+    completed: await completeResponse.json(),
+  };
+}
+
+async function stageCheckpointArchive(accessToken, metadata, archive) {
+  const initializeResponse = await fetch(`${origin}/api/checkpoints/uploads`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      ...metadata,
+      checksum: `sha256:${createHash("sha256").update(archive).digest("hex")}`,
+      sizeBytes: archive.length,
+    }),
+  });
+  assert.equal(
+    initializeResponse.status,
+    201,
+    `upload initialization failed: ${await initializeResponse.clone().text()}`,
+  );
+  const initialized = await initializeResponse.json();
+  for (let partNumber = 1; partNumber <= initialized.partCount; partNumber += 1) {
+    const start = (partNumber - 1) * initialized.chunkSize;
+    const part = archive.subarray(
+      start,
+      Math.min(start + initialized.chunkSize, archive.length),
+    );
+    const partChecksum = `sha256:${createHash("sha256").update(part).digest("hex")}`;
+    const partResponse = await fetch(
+      `${origin}/api/checkpoints/uploads/${initialized.uploadId}/parts/${partNumber}`,
+      {
+        method: "PUT",
+        headers: {
+          authorization: `Bearer ${accessToken}`,
+          "content-type": "application/octet-stream",
+          "x-chunk-sha256": partChecksum,
+        },
+        body: part,
+      },
+    );
+    assert.equal(partResponse.status, 200);
+  }
+  return initialized;
+}
+
 test("server-renders the Relay product shell", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>Relay — Encrypted checkpoints for agent workspaces\.<\/title>/i);
+  assert.match(
+    html,
+    /<title>Relay — Private or public checkpoints for agent workspaces\.<\/title>/i,
+  );
   assert.match(html, /Workspace continuity/);
   assert.match(html, /Connect skills/);
   assert.match(html, /Checkpoint registry/);
   assert.match(html, /Latest checkpoint/);
-  assert.match(html, /Locally keyed checkpoint registry/);
-  assert.match(html, /key generated or entered locally and never sent to Relay/);
+  assert.match(html, /Private and public checkpoint registry/);
+  assert.match(html, /Private checkpoints stay locally encrypted/);
+  assert.match(html, /public checkpoints are separate, intentionally readable artifacts/i);
   assert.doesNotMatch(html, /Agent runners|Use runner|Start a handoff/);
   assert.doesNotMatch(html, /Keychain|Credential Locker|OS-held key|URL fragment/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
@@ -89,7 +287,7 @@ test("uses ChatGPT as the only interactive sign-in provider", async () => {
   assert.doesNotMatch(authSources, /Google|GitHub|signIn\.social/);
 });
 
-test("leads with Relay's zero-knowledge checkpoint security", async () => {
+test("leads with Relay's explicit private and public security boundary", async () => {
   const pageSource = await readFile(
     new URL("../app/page.tsx", import.meta.url),
     "utf8",
@@ -105,19 +303,21 @@ test("leads with Relay's zero-knowledge checkpoint security", async () => {
 
   assert.match(pageSource, /if \(!principal\) return <RelayLanding \/>/);
   assert.doesNotMatch(pageSource, /redirect\("\/sign-in"\)/);
-  assert.match(landingSource, /Secure workspace continuity/);
-  assert.match(landingSource, /Encrypted checkpoints/);
-  assert.match(landingSource, /for agent workspaces/);
+  assert.match(landingSource, /Private by default · public by choice/);
+  assert.match(landingSource, /Private by default/);
+  assert.match(landingSource, /private or public/);
   assert.match(landingSource, /Install Relay skills/);
   assert.match(landingSource, /relay-checkpoint-skills\.zip/);
-  assert.match(landingSource, /Relay stores ciphertext, never plaintext/);
+  assert.match(landingSource, /Private checkpoints are sealed locally/);
+  assert.match(landingSource, /Public is intentionally readable/);
   assert.match(landingSource, /AES-256-GCM/);
   assert.match(landingSource, /Recovery key stays local/);
   assert.match(landingSource, /Restore with proof/);
+  assert.match(landingSource, /Publication is effectively irreversible/);
   assert.doesNotMatch(landingSource, /Install without login|Sign in to upload|Login required/);
   assert.match(landingSource, /Do not sign in, connect an account/);
-  assert.match(landingSource, /privacy-safe pseudonym/);
-  assert.match(landingSource, /chosen agent profile/);
+  assert.match(landingSource, /approved\s+or pseudonymous agent metadata/);
+  assert.match(landingSource, /Shared or pseudonymous, independently/);
   assert.match(principalSource, /if \(!chatGPTUser && !useLocalPreview\) return null/);
   assert.ok(
     principalSource.indexOf("return null") <
@@ -142,6 +342,14 @@ test("agent-operated skill prompts are copy-ready", async () => {
   assert.match(source, /Run all commands yourself/);
   assert.match(source, /one-sentence summary of what this agent did/);
   assert.match(source, /playful pseudonym/);
+  assert.match(source, /checkpoint\.publication\?\.title \|\| checkpoint\.label/);
+  assert.match(source, /return checkpoint\.publication\.description/);
+  assert.match(source, /visibility-badge \$\{checkpoint\.visibility\}/);
+  assert.match(source, /Shared" : "Pseudonym/);
+  assert.match(source, /Make public/);
+  assert.match(source, /Copy public URL/);
+  assert.match(source, /Keyless restore/);
+  assert.match(source, /\/api\/public\/checkpoints\/\$\{encodeURIComponent\(checkpoint\.id\)\}\/download/);
   assert.doesNotMatch(source, /Download bundle|Device sign-in|Creation skill|Restore skill/);
   assert.doesNotMatch(source, /href=\{`\/api\/checkpoints\/\$\{checkpoint\.id\}\/download`\}/);
 });
@@ -162,14 +370,45 @@ test("serves the downloadable skill bundle with a matching checksum", async () =
 });
 
 test("device authorization issues and revokes a scoped agent credential", async () => {
+  const privateAuthorizationResponse = await fetch(
+    `${origin}/api/device/authorize`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ client_name: "Private-only test agent" }),
+    },
+  );
+  assert.equal(privateAuthorizationResponse.status, 201);
+  const privateAuthorization = await privateAuthorizationResponse.json();
+  assert.match(privateAuthorization.scope, /checkpoints:write/);
+  assert.doesNotMatch(privateAuthorization.scope, /checkpoints:publish/);
+
+  const invalidScopeResponse = await fetch(`${origin}/api/device/authorize`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      client_name: "Invalid scope test agent",
+      scope: "checkpoints:read checkpoints:admin",
+    }),
+  });
+  assert.equal(invalidScopeResponse.status, 400);
+  assert.deepEqual(await invalidScopeResponse.json(), {
+    error: "invalid_scope",
+  });
+
   const authorizationResponse = await fetch(`${origin}/api/device/authorize`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ client_name: "Rendered HTML test agent" }),
+    body: JSON.stringify({
+      client_name: "Rendered HTML test agent",
+      scope:
+        "checkpoints:read checkpoints:write checkpoints:share checkpoints:publish",
+    }),
   });
   assert.equal(authorizationResponse.status, 201);
   const authorization = await authorizationResponse.json();
   assert.match(authorization.device_code, /^rdc_[a-f0-9]{64}$/);
+  assert.match(authorization.scope, /checkpoints:publish/);
   assert.match(authorization.user_code, /^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
   assert.equal(
     authorization.verification_uri_complete,
@@ -190,6 +429,7 @@ test("device authorization issues and revokes a scoped agent credential", async 
   assert.match(approvalHtml, /Connect a local agent/);
   assert.match(approvalHtml, /Rendered HTML test agent/);
   assert.match(approvalHtml, new RegExp(authorization.user_code));
+  assert.match(approvalHtml, /effectively irreversible/);
 
   const approvalResponse = await fetch(`${origin}/api/device/approve`, {
     method: "POST",
@@ -215,6 +455,7 @@ test("device authorization issues and revokes a scoped agent credential", async 
   assert.match(token.access_token, /^rly_[a-f0-9]{64}$/);
   assert.equal(token.token_type, "Bearer");
   assert.match(token.scope, /checkpoints:write/);
+  assert.match(token.scope, /checkpoints:publish/);
 
   const statusResponse = await fetch(`${origin}/api/agent/status`, {
     headers: { authorization: `Bearer ${token.access_token}` },
@@ -223,6 +464,7 @@ test("device authorization issues and revokes a scoped agent credential", async 
   const status = await statusResponse.json();
   assert.equal(status.connected, true);
   assert.match(status.scopes.join(" "), /checkpoints:write/);
+  assert.match(status.scopes.join(" "), /checkpoints:publish/);
 
   const checkpointId = `cp_rendered_${Date.now()}`;
   const encryptedHeader = Buffer.from(JSON.stringify({
@@ -342,6 +584,388 @@ test("device authorization issues and revokes a scoped agent credential", async 
     "Release Gardener",
   );
   assert.equal(downloadResponse.headers.get("x-relay-agent-metadata-mode"), "shared");
+
+  const anonymousPrivateResponse = await fetch(
+    `${origin}/api/public/checkpoints/${checkpointId}`,
+  );
+  assert.equal(anonymousPrivateResponse.status, 404);
+
+  const directPublicId = `cp_public_${Date.now()}`;
+  const directPublicTitle = "Public release checkpoint";
+  const directPublicDescription =
+    "A keyless public workspace checkpoint with approved publication metadata.";
+  const directPublicArchive = publicCheckpointArchive(
+    directPublicId,
+    directPublicTitle,
+    directPublicDescription,
+  );
+  const directPublic = await uploadCheckpointArchive(
+    token.access_token,
+    {
+      operation: "create-public",
+      checkpointId: directPublicId,
+      encryptionVersion: 0,
+      cipher: "none",
+      publicFormatVersion: 1,
+      publicTitle: directPublicTitle,
+      publicDescription: directPublicDescription,
+      agentName: "Release Gardener",
+      agentDescription:
+        "Published a sanitized checkpoint with metadata and verified keyless restore.",
+      agentMetadataMode: "shared",
+    },
+    directPublicArchive,
+  );
+  assert.equal(directPublic.completed.checkpoint.visibility, "public");
+  assert.equal(
+    directPublic.completed.checkpoint.publication.title,
+    directPublicTitle,
+  );
+  assert.equal(
+    directPublic.completed.checkpoint.publication.description,
+    directPublicDescription,
+  );
+  assert.equal(
+    directPublic.completed.checkpoint.publication.sourceCiphertextChecksum,
+    null,
+  );
+
+  const publicMetadataResponse = await fetch(
+    `${origin}/api/public/checkpoints/${directPublicId}`,
+  );
+  assert.equal(publicMetadataResponse.status, 200);
+  const publicMetadata = await publicMetadataResponse.json();
+  assert.equal(publicMetadata.checkpoint.visibility, "public");
+  assert.equal(publicMetadata.checkpoint.publication.title, directPublicTitle);
+  assert.equal(
+    publicMetadata.checkpoint.publication.description,
+    directPublicDescription,
+  );
+  assert.deepEqual(
+    Object.keys(publicMetadata.checkpoint).sort(),
+    ["id", "publication", "visibility"],
+  );
+  assert.equal(
+    publicMetadata.checkpoint.publication.sourceCiphertextChecksum,
+    undefined,
+  );
+  const publicDownloadResponse = await fetch(
+    `${origin}/api/public/checkpoints/${directPublicId}/download`,
+  );
+  assert.equal(publicDownloadResponse.status, 200);
+  assert.equal(
+    publicDownloadResponse.headers.get("content-type"),
+    "application/vnd.relay.public-checkpoint+gzip",
+  );
+  assert.match(
+    publicDownloadResponse.headers.get("cache-control") ?? "",
+    /public.*immutable/,
+  );
+  assert.equal(publicDownloadResponse.headers.get("x-relay-agent-name"), null);
+  assert.deepEqual(
+    Buffer.from(await publicDownloadResponse.arrayBuffer()),
+    directPublicArchive,
+  );
+  const abortCompletedResponse = await fetch(
+    `${origin}/api/checkpoints/uploads/${directPublic.initialized.uploadId}`,
+    {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${token.access_token}` },
+    },
+  );
+  assert.equal(abortCompletedResponse.status, 409);
+  const publicDownloadAfterAbort = await fetch(
+    `${origin}/api/public/checkpoints/${directPublicId}/download`,
+  );
+  assert.equal(publicDownloadAfterAbort.status, 200);
+  assert.deepEqual(
+    Buffer.from(await publicDownloadAfterAbort.arrayBuffer()),
+    directPublicArchive,
+  );
+
+  const mismatchedPublicId = `cp_public_mismatch_${Date.now()}`;
+  const mismatchedPublic = await uploadCheckpointArchive(
+    token.access_token,
+    {
+      operation: "create-public",
+      checkpointId: mismatchedPublicId,
+      encryptionVersion: 0,
+      cipher: "none",
+      publicFormatVersion: 1,
+      publicTitle: "Different API title",
+      publicDescription: directPublicDescription,
+      agentName: "Release Gardener",
+      agentDescription: "Attempted mismatched public metadata.",
+      agentMetadataMode: "shared",
+    },
+    publicCheckpointArchive(
+      mismatchedPublicId,
+      "Embedded archive title",
+      directPublicDescription,
+    ),
+    400,
+  );
+  assert.match(
+    mismatchedPublic.completed.error,
+    /valid gzip\/tar archive/,
+  );
+  const mismatchedAnonymous = await fetch(
+    `${origin}/api/public/checkpoints/${mismatchedPublicId}`,
+  );
+  assert.equal(mismatchedAnonymous.status, 404);
+
+  for (const [suffix, additionalEntries] of [
+    ["windows-name", [{ name: "bad?name", data: "unsafe", pax: true }]],
+    ["case-collision", [{ name: "readme.md", data: "collision", pax: true }]],
+  ]) {
+    const unsafePublicId = `cp_public_${suffix}_${Date.now()}`;
+    const unsafeTitle = `Rejected ${suffix}`;
+    const rejected = await uploadCheckpointArchive(
+      token.access_token,
+      {
+        operation: "create-public",
+        checkpointId: unsafePublicId,
+        encryptionVersion: 0,
+        cipher: "none",
+        publicFormatVersion: 1,
+        publicTitle: unsafeTitle,
+        publicDescription: directPublicDescription,
+        agentName: "Release Gardener",
+        agentDescription: "Attempted an unsafe public archive path.",
+        agentMetadataMode: "shared",
+      },
+      publicCheckpointArchive(
+        unsafePublicId,
+        unsafeTitle,
+        directPublicDescription,
+        additionalEntries,
+      ),
+      400,
+    );
+    assert.match(rejected.completed.error, /valid gzip\/tar archive/);
+  }
+
+  const promotedTitle = "Published encrypted checkpoint";
+  const promotedDescription =
+    "A locally decrypted and validated public representation with its original key kept off Relay.";
+  const promotedArchive = publicCheckpointArchive(
+    checkpointId,
+    promotedTitle,
+    promotedDescription,
+  );
+  const promoted = await uploadCheckpointArchive(
+    token.access_token,
+    {
+      operation: "publish-existing",
+      checkpointId,
+      encryptionVersion: 0,
+      cipher: "none",
+      publicFormatVersion: 1,
+      publicTitle: promotedTitle,
+      publicDescription: promotedDescription,
+      sourceCiphertextChecksum: archiveChecksum,
+    },
+    promotedArchive,
+  );
+  assert.equal(promoted.completed.checkpoint.visibility, "public");
+  assert.equal(
+    promoted.completed.checkpoint.publication.sourceCiphertextChecksum,
+    archiveChecksum,
+  );
+
+  const promotedDownloadResponse = await fetch(
+    `${origin}/api/public/checkpoints/${checkpointId}/download`,
+  );
+  assert.equal(promotedDownloadResponse.status, 200);
+  assert.deepEqual(
+    Buffer.from(await promotedDownloadResponse.arrayBuffer()),
+    promotedArchive,
+  );
+  const promotedMetadataResponse = await fetch(
+    `${origin}/api/public/checkpoints/${checkpointId}`,
+  );
+  assert.equal(promotedMetadataResponse.status, 200);
+  const promotedMetadata = await promotedMetadataResponse.json();
+  assert.equal(promotedMetadata.checkpoint.workspaceName, undefined);
+  assert.equal(promotedMetadata.checkpoint.parentId, undefined);
+  assert.equal(promotedMetadata.checkpoint.handoff, undefined);
+  assert.equal(
+    promotedMetadata.checkpoint.publication.sourceCiphertextChecksum,
+    undefined,
+  );
+  const originalDownloadAfterPublish = await fetch(
+    `${origin}/api/checkpoints/${checkpointId}/download`,
+    { headers: { authorization: `Bearer ${token.access_token}` } },
+  );
+  assert.equal(originalDownloadAfterPublish.status, 200);
+  assert.deepEqual(
+    Buffer.from(await originalDownloadAfterPublish.arrayBuffer()),
+    encryptedArchive,
+  );
+
+  const recoveredAfterCrashId = `cp_lease_recovery_${Date.now()}`;
+  const recoveredAfterCrashArchive = encryptedCheckpointArchive(
+    recoveredAfterCrashId,
+  );
+  const recoveredAfterCrashUpload = await stageCheckpointArchive(
+    token.access_token,
+    {
+      checkpointId: recoveredAfterCrashId,
+      encryptionVersion: 2,
+      cipher: "AES-256-GCM",
+      agentName: "Lease Recovery Agent",
+      agentDescription:
+        "Recovered an expired completion lease after an interrupted worker.",
+      agentMetadataMode: "shared",
+    },
+    recoveredAfterCrashArchive,
+  );
+  const interruptedBeforeDurable = await fetch(
+    `${origin}/api/checkpoints/uploads/${recoveredAfterCrashUpload.uploadId}/complete`,
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token.access_token}`,
+        "x-relay-test-interrupt-completion": "before-durable",
+      },
+    },
+  );
+  assert.equal(interruptedBeforeDurable.status, 503);
+  const interruptedBeforeDurableStatus = await fetch(
+    `${origin}/api/checkpoints/uploads/${recoveredAfterCrashUpload.uploadId}`,
+    { headers: { authorization: `Bearer ${token.access_token}` } },
+  );
+  assert.equal(interruptedBeforeDurableStatus.status, 200);
+  assert.equal(
+    (await interruptedBeforeDurableStatus.json()).status,
+    "completing",
+  );
+  const recoveredCompletion = await fetch(
+    `${origin}/api/checkpoints/uploads/${recoveredAfterCrashUpload.uploadId}/complete`,
+    {
+      method: "POST",
+      headers: { authorization: `Bearer ${token.access_token}` },
+    },
+  );
+  assert.equal(recoveredCompletion.status, 201);
+  assert.equal(
+    (await recoveredCompletion.json()).checkpoint.id,
+    recoveredAfterCrashId,
+  );
+
+  const durableCrashId = `cp_lease_durable_${Date.now()}`;
+  const durableCrashArchive = encryptedCheckpointArchive(durableCrashId);
+  const durableCrashUpload = await stageCheckpointArchive(
+    token.access_token,
+    {
+      checkpointId: durableCrashId,
+      encryptionVersion: 2,
+      cipher: "AES-256-GCM",
+      agentName: "Durable Lease Agent",
+      agentDescription:
+        "Verified durable state before cleaning an interrupted completion.",
+      agentMetadataMode: "shared",
+    },
+    durableCrashArchive,
+  );
+  const interruptedAfterDurable = await fetch(
+    `${origin}/api/checkpoints/uploads/${durableCrashUpload.uploadId}/complete`,
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token.access_token}`,
+        "x-relay-test-interrupt-completion": "after-durable",
+      },
+    },
+  );
+  assert.equal(interruptedAfterDurable.status, 503);
+  const abortDurableCrash = await fetch(
+    `${origin}/api/checkpoints/uploads/${durableCrashUpload.uploadId}`,
+    {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${token.access_token}` },
+    },
+  );
+  assert.equal(abortDurableCrash.status, 409);
+  const recoveredDurableCompletion = await fetch(
+    `${origin}/api/checkpoints/uploads/${durableCrashUpload.uploadId}/complete`,
+    {
+      method: "POST",
+      headers: { authorization: `Bearer ${token.access_token}` },
+    },
+  );
+  assert.equal(recoveredDurableCompletion.status, 200);
+  assert.equal(
+    (await recoveredDurableCompletion.json()).checkpoint.id,
+    durableCrashId,
+  );
+  const durableCrashDownload = await fetch(
+    `${origin}/api/checkpoints/${durableCrashId}/download`,
+    { headers: { authorization: `Bearer ${token.access_token}` } },
+  );
+  assert.equal(durableCrashDownload.status, 200);
+  assert.deepEqual(
+    Buffer.from(await durableCrashDownload.arrayBuffer()),
+    durableCrashArchive,
+  );
+
+  const abandonedCrashId = `cp_lease_abort_${Date.now()}`;
+  const abandonedCrashArchive = encryptedCheckpointArchive(abandonedCrashId);
+  const abandonedCrashUpload = await stageCheckpointArchive(
+    token.access_token,
+    {
+      checkpointId: abandonedCrashId,
+      encryptionVersion: 2,
+      cipher: "AES-256-GCM",
+      agentName: "Lease Cleanup Agent",
+      agentDescription:
+        "Cleaned an expired completion lease with no durable checkpoint.",
+      agentMetadataMode: "shared",
+    },
+    abandonedCrashArchive,
+  );
+  const interruptedForAbort = await fetch(
+    `${origin}/api/checkpoints/uploads/${abandonedCrashUpload.uploadId}/complete`,
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token.access_token}`,
+        "x-relay-test-interrupt-completion": "before-durable-active",
+      },
+    },
+  );
+  assert.equal(interruptedForAbort.status, 503);
+  const abortActiveCrash = await fetch(
+    `${origin}/api/checkpoints/uploads/${abandonedCrashUpload.uploadId}`,
+    {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${token.access_token}` },
+    },
+  );
+  assert.equal(abortActiveCrash.status, 409);
+  assert.equal(abortActiveCrash.headers.get("retry-after"), "1");
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  const abortAbandonedCrash = await fetch(
+    `${origin}/api/checkpoints/uploads/${abandonedCrashUpload.uploadId}`,
+    {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${token.access_token}` },
+    },
+  );
+  assert.equal(abortAbandonedCrash.status, 204);
+  const abandonedCrashStatus = await fetch(
+    `${origin}/api/checkpoints/uploads/${abandonedCrashUpload.uploadId}`,
+    { headers: { authorization: `Bearer ${token.access_token}` } },
+  );
+  assert.equal(abandonedCrashStatus.status, 404);
+  const abandonedCrashCompletion = await fetch(
+    `${origin}/api/checkpoints/uploads/${abandonedCrashUpload.uploadId}/complete`,
+    {
+      method: "POST",
+      headers: { authorization: `Bearer ${token.access_token}` },
+    },
+  );
+  assert.equal(abandonedCrashCompletion.status, 404);
 
   const revokeResponse = await fetch(`${origin}/api/device/revoke`, {
     method: "POST",

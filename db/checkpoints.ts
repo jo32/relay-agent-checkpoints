@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { ensureRelaySchema } from "./identity";
 import type { AgentMetadataMode } from "../lib/agent-metadata";
 
-export type CheckpointRecord = {
+export type StoredCheckpointRecord = {
   id: string;
   ownerKey: string;
   tenantId: string;
@@ -28,6 +28,51 @@ export type CheckpointRecord = {
   shareExpiresAt?: string | null;
 };
 
+export type CheckpointPublicationRecord = {
+  checkpointId: string;
+  tenantId: string;
+  objectKey: string;
+  checksum: string;
+  sizeBytes: number;
+  formatVersion: number;
+  sourceCiphertextChecksum: string | null;
+  publicTitle: string;
+  publicDescription: string;
+  publishedAt: string;
+  publishedByUserId: string | null;
+};
+
+export type CheckpointPublicationMetadata = {
+  title: string;
+  description: string;
+  checksum: string;
+  sizeBytes: number;
+  formatVersion: number;
+  sourceCiphertextChecksum: string | null;
+  publishedAt: string;
+};
+
+export type CheckpointRecord = StoredCheckpointRecord & {
+  visibility: "private" | "public";
+  publication: CheckpointPublicationMetadata | null;
+};
+
+type RawPublicationColumns = {
+  publicationCheckpointId: string | null;
+  publicationTenantId: string | null;
+  publicationObjectKey: string | null;
+  publicationChecksum: string | null;
+  publicationSizeBytes: number | null;
+  publicationFormatVersion: number | null;
+  sourceCiphertextChecksum: string | null;
+  publicTitle: string | null;
+  publicDescription: string | null;
+  publishedAt: string | null;
+  publishedByUserId: string | null;
+};
+
+type RawCheckpointRecord = StoredCheckpointRecord & RawPublicationColumns;
+
 type RuntimeEnv = {
   DB: D1Database;
   CHECKPOINTS: R2Bucket;
@@ -39,7 +84,14 @@ export type ApiTokenPrincipal = {
   scopes: string[];
 };
 
-const DEFAULT_TOKEN_SCOPES = [
+export const CHECKPOINT_SCOPES = [
+  "checkpoints:read",
+  "checkpoints:write",
+  "checkpoints:share",
+  "checkpoints:publish",
+] as const;
+export type CheckpointScope = (typeof CHECKPOINT_SCOPES)[number];
+export const DEFAULT_TOKEN_SCOPES = [
   "checkpoints:read",
   "checkpoints:write",
   "checkpoints:share",
@@ -62,111 +114,277 @@ export async function listCheckpoints(tenantId: string) {
   await ensureCheckpointSchema(DB);
   const result = await DB.prepare(
     `SELECT
-      id,
-      workspace_name AS workspaceName,
-      label,
-      source_agent AS sourceAgent,
-      agent_name AS agentName,
-      agent_description AS agentDescription,
-      agent_metadata_mode AS agentMetadataMode,
-      status,
-      created_at AS createdAt,
-      size_bytes AS sizeBytes,
-      file_count AS fileCount,
-      excluded_count AS excludedCount,
-      parent_id AS parentId,
-      handoff,
-      checksum,
-      encryption_version AS encryptionVersion,
-      cipher
-    FROM checkpoints
-    WHERE COALESCE(tenant_id, owner_key) = ?
-    ORDER BY created_at DESC
+      c.id,
+      c.owner_key AS ownerKey,
+      COALESCE(c.tenant_id, c.owner_key) AS tenantId,
+      c.created_by_user_id AS createdByUserId,
+      c.workspace_name AS workspaceName,
+      c.label,
+      c.source_agent AS sourceAgent,
+      c.agent_name AS agentName,
+      c.agent_description AS agentDescription,
+      c.agent_metadata_mode AS agentMetadataMode,
+      c.status,
+      c.created_at AS createdAt,
+      c.size_bytes AS sizeBytes,
+      c.file_count AS fileCount,
+      c.excluded_count AS excludedCount,
+      c.parent_id AS parentId,
+      c.handoff,
+      c.object_key AS objectKey,
+      c.checksum,
+      c.encryption_version AS encryptionVersion,
+      c.cipher,
+      p.checkpoint_id AS publicationCheckpointId,
+      p.tenant_id AS publicationTenantId,
+      p.object_key AS publicationObjectKey,
+      p.checksum AS publicationChecksum,
+      p.size_bytes AS publicationSizeBytes,
+      p.format_version AS publicationFormatVersion,
+      p.source_ciphertext_checksum AS sourceCiphertextChecksum,
+      p.public_title AS publicTitle,
+      p.public_description AS publicDescription,
+      p.published_at AS publishedAt,
+      p.published_by_user_id AS publishedByUserId
+    FROM checkpoints c
+    LEFT JOIN checkpoint_publications p ON p.checkpoint_id = c.id
+    WHERE COALESCE(c.tenant_id, c.owner_key) = ?
+    ORDER BY c.created_at DESC
     LIMIT 50`,
   )
     .bind(tenantId)
-    .all<
-      Omit<
-        CheckpointRecord,
-        "ownerKey" | "tenantId" | "createdByUserId" | "objectKey"
-      >
-    >();
+    .all<RawCheckpointRecord>();
 
-  return result.results ?? [];
+  return (result.results ?? []).map(toOwnerCheckpointDto);
 }
 
-export async function insertCheckpoint(record: CheckpointRecord) {
+export async function insertCheckpoint(record: StoredCheckpointRecord) {
   const { DB } = getRuntimeEnv();
   await ensureCheckpointSchema(DB);
-  await DB.prepare(
-    `INSERT INTO checkpoints (
-      id, owner_key, tenant_id, created_by_user_id,
-      workspace_name, label, source_agent, status, created_at,
-      agent_name, agent_description, agent_metadata_mode,
-      size_bytes, file_count, excluded_count, parent_id, handoff, object_key, checksum,
-      encryption_version, cipher, share_token, share_expires_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  await checkpointInsertStatement(DB, record).run();
+}
+
+export async function insertPublicCheckpoint(
+  checkpoint: StoredCheckpointRecord,
+  publication: CheckpointPublicationRecord,
+) {
+  if (
+    checkpoint.id !== publication.checkpointId ||
+    checkpoint.tenantId !== publication.tenantId ||
+    checkpoint.encryptionVersion !== 0 ||
+    checkpoint.cipher !== "none" ||
+    checkpoint.objectKey !== publication.objectKey ||
+    checkpoint.checksum !== publication.checksum ||
+    publication.sourceCiphertextChecksum !== null
+  ) {
+    throw new Error("Public checkpoint and publication metadata do not match.");
+  }
+  const { DB } = getRuntimeEnv();
+  await ensureCheckpointSchema(DB);
+  await DB.batch([
+    checkpointInsertStatement(DB, checkpoint),
+    publicationInsertStatement(DB, publication),
+  ]);
+}
+
+export type PublishExistingResult =
+  | "created"
+  | "exists"
+  | "not-found"
+  | "source-mismatch";
+
+export async function insertPublicationForExistingCheckpoint(
+  publication: CheckpointPublicationRecord,
+): Promise<PublishExistingResult> {
+  if (
+    !publication.sourceCiphertextChecksum ||
+    !publication.publishedByUserId
+  ) {
+    throw new Error(
+      "Promoted checkpoints require a source checksum and publishing user.",
+    );
+  }
+  const { DB } = getRuntimeEnv();
+  await ensureCheckpointSchema(DB);
+  const inserted = await DB.prepare(
+    `INSERT INTO checkpoint_publications (
+      checkpoint_id, tenant_id, object_key, checksum, size_bytes,
+      format_version, source_ciphertext_checksum, public_title,
+      public_description, published_at, published_by_user_id
+    )
+    SELECT
+      c.id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    FROM checkpoints c
+    WHERE c.id = ?
+      AND COALESCE(c.tenant_id, c.owner_key) = ?
+      AND c.created_by_user_id = ?
+      AND lower(c.checksum) = lower(?)
+      AND c.encryption_version >= 2
+      AND NOT EXISTS (
+        SELECT 1 FROM checkpoint_publications p WHERE p.checkpoint_id = c.id
+      )`,
   )
     .bind(
-      record.id,
-      record.ownerKey,
-      record.tenantId,
-      record.createdByUserId,
-      record.workspaceName,
-      record.label,
-      record.sourceAgent,
-      record.status,
-      record.createdAt,
-      record.agentName,
-      record.agentDescription,
-      record.agentMetadataMode,
-      record.sizeBytes,
-      record.fileCount,
-      record.excludedCount,
-      record.parentId,
-      record.handoff,
-      record.objectKey,
-      record.checksum,
-      record.encryptionVersion,
-      record.cipher,
-      record.shareToken ?? null,
-      record.shareExpiresAt ?? null,
+      publication.tenantId,
+      publication.objectKey,
+      publication.checksum,
+      publication.sizeBytes,
+      publication.formatVersion,
+      publication.sourceCiphertextChecksum,
+      publication.publicTitle,
+      publication.publicDescription,
+      publication.publishedAt,
+      publication.publishedByUserId,
+      publication.checkpointId,
+      publication.tenantId,
+      publication.publishedByUserId,
+      publication.sourceCiphertextChecksum,
     )
     .run();
+  if (inserted.meta.changes > 0) return "created";
+
+  const existingPublication = await findCheckpointPublication(
+    publication.checkpointId,
+    publication.tenantId,
+  );
+  if (existingPublication) return "exists";
+  const source = await DB.prepare(
+    `SELECT checksum
+    FROM checkpoints
+    WHERE id = ?
+      AND COALESCE(tenant_id, owner_key) = ?
+      AND created_by_user_id = ?
+    LIMIT 1`,
+  )
+    .bind(
+      publication.checkpointId,
+      publication.tenantId,
+      publication.publishedByUserId,
+    )
+    .first<{ checksum: string }>();
+  return source ? "source-mismatch" : "not-found";
 }
 
 export async function findCheckpoint(id: string, tenantId: string) {
   const { DB } = getRuntimeEnv();
   await ensureCheckpointSchema(DB);
-  return DB.prepare(
+  const row = await DB.prepare(
     `SELECT
-      id,
-      owner_key AS ownerKey,
-      COALESCE(tenant_id, owner_key) AS tenantId,
-      created_by_user_id AS createdByUserId,
-      workspace_name AS workspaceName,
-      label,
-      source_agent AS sourceAgent,
-      agent_name AS agentName,
-      agent_description AS agentDescription,
-      agent_metadata_mode AS agentMetadataMode,
-      status,
-      created_at AS createdAt,
-      size_bytes AS sizeBytes,
-      file_count AS fileCount,
-      excluded_count AS excludedCount,
-      parent_id AS parentId,
-      handoff,
-      object_key AS objectKey,
-      checksum,
-      encryption_version AS encryptionVersion,
-      cipher
-    FROM checkpoints
-    WHERE id = ? AND COALESCE(tenant_id, owner_key) = ?
+      c.id,
+      c.owner_key AS ownerKey,
+      COALESCE(c.tenant_id, c.owner_key) AS tenantId,
+      c.created_by_user_id AS createdByUserId,
+      c.workspace_name AS workspaceName,
+      c.label,
+      c.source_agent AS sourceAgent,
+      c.agent_name AS agentName,
+      c.agent_description AS agentDescription,
+      c.agent_metadata_mode AS agentMetadataMode,
+      c.status,
+      c.created_at AS createdAt,
+      c.size_bytes AS sizeBytes,
+      c.file_count AS fileCount,
+      c.excluded_count AS excludedCount,
+      c.parent_id AS parentId,
+      c.handoff,
+      c.object_key AS objectKey,
+      c.checksum,
+      c.encryption_version AS encryptionVersion,
+      c.cipher,
+      p.checkpoint_id AS publicationCheckpointId,
+      p.tenant_id AS publicationTenantId,
+      p.object_key AS publicationObjectKey,
+      p.checksum AS publicationChecksum,
+      p.size_bytes AS publicationSizeBytes,
+      p.format_version AS publicationFormatVersion,
+      p.source_ciphertext_checksum AS sourceCiphertextChecksum,
+      p.public_title AS publicTitle,
+      p.public_description AS publicDescription,
+      p.published_at AS publishedAt,
+      p.published_by_user_id AS publishedByUserId
+    FROM checkpoints c
+    LEFT JOIN checkpoint_publications p ON p.checkpoint_id = c.id
+    WHERE c.id = ? AND COALESCE(c.tenant_id, c.owner_key) = ?
     LIMIT 1`,
   )
     .bind(id, tenantId)
-    .first<CheckpointRecord>();
+    .first<RawCheckpointRecord>();
+  return row ? toCheckpointRecord(row) : null;
+}
+
+export async function findPublicCheckpoint(id: string) {
+  if (!/^cp_[a-z0-9_-]{6,80}$/i.test(id)) return null;
+  const { DB } = getRuntimeEnv();
+  await ensureCheckpointSchema(DB);
+  const row = await DB.prepare(
+    `SELECT
+      c.id,
+      c.owner_key AS ownerKey,
+      COALESCE(c.tenant_id, c.owner_key) AS tenantId,
+      c.created_by_user_id AS createdByUserId,
+      c.workspace_name AS workspaceName,
+      c.label,
+      c.source_agent AS sourceAgent,
+      c.agent_name AS agentName,
+      c.agent_description AS agentDescription,
+      c.agent_metadata_mode AS agentMetadataMode,
+      c.status,
+      c.created_at AS createdAt,
+      c.size_bytes AS sizeBytes,
+      c.file_count AS fileCount,
+      c.excluded_count AS excludedCount,
+      c.parent_id AS parentId,
+      c.handoff,
+      c.object_key AS objectKey,
+      c.checksum,
+      c.encryption_version AS encryptionVersion,
+      c.cipher,
+      p.checkpoint_id AS publicationCheckpointId,
+      p.tenant_id AS publicationTenantId,
+      p.object_key AS publicationObjectKey,
+      p.checksum AS publicationChecksum,
+      p.size_bytes AS publicationSizeBytes,
+      p.format_version AS publicationFormatVersion,
+      p.source_ciphertext_checksum AS sourceCiphertextChecksum,
+      p.public_title AS publicTitle,
+      p.public_description AS publicDescription,
+      p.published_at AS publishedAt,
+      p.published_by_user_id AS publishedByUserId
+    FROM checkpoint_publications p
+    JOIN checkpoints c ON c.id = p.checkpoint_id
+    WHERE p.checkpoint_id = ?
+    LIMIT 1`,
+  )
+    .bind(id)
+    .first<RawCheckpointRecord>();
+  return row ? toCheckpointRecord(row) : null;
+}
+
+export async function findCheckpointPublication(
+  id: string,
+  tenantId: string,
+) {
+  const { DB } = getRuntimeEnv();
+  await ensureCheckpointSchema(DB);
+  return DB.prepare(
+    `SELECT
+      checkpoint_id AS checkpointId,
+      tenant_id AS tenantId,
+      object_key AS objectKey,
+      checksum,
+      size_bytes AS sizeBytes,
+      format_version AS formatVersion,
+      source_ciphertext_checksum AS sourceCiphertextChecksum,
+      public_title AS publicTitle,
+      public_description AS publicDescription,
+      published_at AS publishedAt,
+      published_by_user_id AS publishedByUserId
+    FROM checkpoint_publications
+    WHERE checkpoint_id = ? AND tenant_id = ?
+    LIMIT 1`,
+  )
+    .bind(id, tenantId)
+    .first<CheckpointPublicationRecord>();
 }
 
 export async function checkpointIdExists(id: string) {
@@ -234,13 +452,14 @@ export async function findSharedCheckpoint(token: string) {
     LIMIT 1`,
   )
     .bind(tokenHash, token, new Date().toISOString())
-    .first<CheckpointRecord>();
+    .first<StoredCheckpointRecord>();
 }
 
 export async function issueApiToken(
   tenantId: string,
   userId: string,
   label: string,
+  requestedScopes: readonly CheckpointScope[] = DEFAULT_TOKEN_SCOPES,
 ) {
   const { DB } = getRuntimeEnv();
   await ensureCheckpointSchema(DB);
@@ -250,7 +469,7 @@ export async function issueApiToken(
   const tokenHash = await hashToken(token);
   const createdAt = new Date().toISOString();
   const expiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
-  const scopes = DEFAULT_TOKEN_SCOPES.join(" ");
+  const scopes = [...new Set(requestedScopes)].join(" ");
   await DB.prepare(
     `INSERT INTO api_tokens (
       token_hash, token_prefix, owner_key, tenant_id, created_by_user_id,
@@ -306,7 +525,7 @@ export async function ownerForApiToken(token: string) {
 
 export async function authenticateApiToken(
   request: Request,
-  requiredScope?: (typeof DEFAULT_TOKEN_SCOPES)[number],
+  requiredScope?: CheckpointScope,
 ) {
   const authorization = request.headers.get("authorization") ?? "";
   const match = authorization.match(/^Bearer\s+(.+)$/i);
@@ -317,9 +536,157 @@ export async function authenticateApiToken(
   return principal;
 }
 
+export function hasCheckpointScopes(
+  principal: ApiTokenPrincipal,
+  ...scopes: CheckpointScope[]
+) {
+  return scopes.every((scope) => principal.scopes.includes(scope));
+}
+
+export function toOwnerCheckpointDto(checkpoint: CheckpointRecord | RawCheckpointRecord) {
+  const normalized =
+    "publicationCheckpointId" in checkpoint
+      ? toCheckpointRecord(checkpoint)
+      : checkpoint;
+  return {
+    id: normalized.id,
+    workspaceName: normalized.workspaceName,
+    label: normalized.label,
+    sourceAgent: normalized.sourceAgent,
+    agentName: normalized.agentName,
+    agentDescription: normalized.agentDescription,
+    agentMetadataMode: normalized.agentMetadataMode,
+    status: normalized.status,
+    createdAt: normalized.createdAt,
+    sizeBytes: normalized.sizeBytes,
+    fileCount: normalized.fileCount,
+    excludedCount: normalized.excludedCount,
+    parentId: normalized.parentId,
+    handoff: normalized.handoff,
+    checksum: normalized.checksum,
+    encryptionVersion: normalized.encryptionVersion,
+    cipher: normalized.cipher,
+    visibility: normalized.visibility,
+    publication: normalized.publication,
+  };
+}
+
 export async function hashToken(token: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
   return [...new Uint8Array(digest)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
+}
+
+function checkpointInsertStatement(db: D1Database, record: StoredCheckpointRecord) {
+  return db
+    .prepare(
+      `INSERT INTO checkpoints (
+        id, owner_key, tenant_id, created_by_user_id,
+        workspace_name, label, source_agent, status, created_at,
+        agent_name, agent_description, agent_metadata_mode,
+        size_bytes, file_count, excluded_count, parent_id, handoff, object_key, checksum,
+        encryption_version, cipher, share_token, share_expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      record.id,
+      record.ownerKey,
+      record.tenantId,
+      record.createdByUserId,
+      record.workspaceName,
+      record.label,
+      record.sourceAgent,
+      record.status,
+      record.createdAt,
+      record.agentName,
+      record.agentDescription,
+      record.agentMetadataMode,
+      record.sizeBytes,
+      record.fileCount,
+      record.excludedCount,
+      record.parentId,
+      record.handoff,
+      record.objectKey,
+      record.checksum,
+      record.encryptionVersion,
+      record.cipher,
+      record.shareToken ?? null,
+      record.shareExpiresAt ?? null,
+    );
+}
+
+function publicationInsertStatement(
+  db: D1Database,
+  publication: CheckpointPublicationRecord,
+) {
+  return db
+    .prepare(
+      `INSERT INTO checkpoint_publications (
+        checkpoint_id, tenant_id, object_key, checksum, size_bytes,
+        format_version, source_ciphertext_checksum, public_title,
+        public_description, published_at, published_by_user_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      publication.checkpointId,
+      publication.tenantId,
+      publication.objectKey,
+      publication.checksum,
+      publication.sizeBytes,
+      publication.formatVersion,
+      publication.sourceCiphertextChecksum,
+      publication.publicTitle,
+      publication.publicDescription,
+      publication.publishedAt,
+      publication.publishedByUserId,
+    );
+}
+
+function toCheckpointRecord(row: RawCheckpointRecord): CheckpointRecord {
+  const publication =
+    row.publicationCheckpointId &&
+    row.publicationChecksum &&
+    row.publicationSizeBytes !== null &&
+    row.publicationFormatVersion !== null &&
+    row.publicTitle &&
+    row.publicDescription &&
+    row.publishedAt
+      ? {
+          title: row.publicTitle,
+          description: row.publicDescription,
+          checksum: row.publicationChecksum,
+          sizeBytes: row.publicationSizeBytes,
+          formatVersion: row.publicationFormatVersion,
+          sourceCiphertextChecksum: row.sourceCiphertextChecksum,
+          publishedAt: row.publishedAt,
+        }
+      : null;
+  return {
+    id: row.id,
+    ownerKey: row.ownerKey,
+    tenantId: row.tenantId,
+    createdByUserId: row.createdByUserId,
+    workspaceName: row.workspaceName,
+    label: row.label,
+    sourceAgent: row.sourceAgent,
+    agentName: row.agentName,
+    agentDescription: row.agentDescription,
+    agentMetadataMode: row.agentMetadataMode,
+    status: row.status,
+    createdAt: row.createdAt,
+    sizeBytes: row.sizeBytes,
+    fileCount: row.fileCount,
+    excludedCount: row.excludedCount,
+    parentId: row.parentId,
+    handoff: row.handoff,
+    objectKey: row.objectKey,
+    checksum: row.checksum,
+    encryptionVersion: row.encryptionVersion,
+    cipher: row.cipher,
+    shareToken: row.shareToken,
+    shareExpiresAt: row.shareExpiresAt,
+    visibility: publication ? "public" : "private",
+    publication,
+  };
 }

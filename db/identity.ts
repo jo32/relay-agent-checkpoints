@@ -132,10 +132,26 @@ const PRODUCT_SCHEMA = [
     revoked_at TEXT
   )`,
   "CREATE INDEX IF NOT EXISTS api_tokens_owner_idx ON api_tokens(owner_key)",
+  `CREATE TABLE IF NOT EXISTS checkpoint_publications (
+    checkpoint_id TEXT PRIMARY KEY REFERENCES checkpoints(id),
+    tenant_id TEXT NOT NULL,
+    object_key TEXT NOT NULL,
+    checksum TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    format_version INTEGER NOT NULL DEFAULT 1,
+    source_ciphertext_checksum TEXT,
+    public_title TEXT NOT NULL,
+    public_description TEXT NOT NULL,
+    published_at TEXT NOT NULL,
+    published_by_user_id TEXT
+  )`,
+  "CREATE UNIQUE INDEX IF NOT EXISTS checkpoint_publications_object_key_uidx ON checkpoint_publications(object_key)",
+  "CREATE INDEX IF NOT EXISTS checkpoint_publications_tenant_published_idx ON checkpoint_publications(tenant_id, published_at DESC)",
   `CREATE TABLE IF NOT EXISTS device_authorizations (
     device_code_hash TEXT PRIMARY KEY,
     user_code_hash TEXT NOT NULL,
     client_name TEXT NOT NULL,
+    requested_scopes TEXT NOT NULL DEFAULT 'checkpoints:read checkpoints:write checkpoints:share',
     status TEXT NOT NULL DEFAULT 'pending',
     tenant_id TEXT,
     user_id TEXT,
@@ -205,6 +221,12 @@ async function ensureSchema(db: D1Database): Promise<void> {
   );
   await ensureColumn(db, "api_tokens", "expires_at", "TEXT");
   await ensureColumn(db, "api_tokens", "revoked_at", "TEXT");
+  await ensureColumn(
+    db,
+    "device_authorizations",
+    "requested_scopes",
+    "TEXT NOT NULL DEFAULT 'checkpoints:read checkpoints:write checkpoints:share'",
+  );
 
   await db.batch([
     db.prepare(
@@ -213,12 +235,15 @@ async function ensureSchema(db: D1Database): Promise<void> {
     db.prepare(
       "CREATE INDEX IF NOT EXISTS api_tokens_tenant_idx ON api_tokens(tenant_id)",
     ),
+    db.prepare(
+      "CREATE INDEX IF NOT EXISTS checkpoint_publications_tenant_published_idx ON checkpoint_publications(tenant_id, published_at DESC)",
+    ),
   ]);
 }
 
 async function ensureColumn(
   db: D1Database,
-  table: "checkpoints" | "api_tokens",
+  table: "checkpoints" | "api_tokens" | "device_authorizations",
   column: string,
   definition: string,
 ): Promise<void> {

@@ -24,6 +24,7 @@ INSPECT = SCRIPTS / "inspect_checkpoint.py"
 SHARE = SCRIPTS / "create_share.py"
 AUTH = SCRIPTS / "relay_auth.py"
 UPLOAD = SCRIPTS / "upload_checkpoint.py"
+PUBLISH = SCRIPTS / "publish_checkpoint.py"
 RESTORE = (
     ROOT
     / ".agents"
@@ -52,6 +53,10 @@ class CheckpointSkillTests(unittest.TestCase):
             and input_text is not None
             and "--generate-key" not in script_args
             and "--prompt-key" not in script_args
+            and not (
+                "--visibility" in script_args
+                and script_args[script_args.index("--visibility") + 1] == "public"
+            )
         ):
             script_args.insert(0, "--prompt-key")
         return subprocess.run(
@@ -273,6 +278,428 @@ class CheckpointSkillTests(unittest.TestCase):
                     ).stdout
                 )
             self.assertEqual(restored["agent"], created["agent"])
+
+    def test_create_public_checkpoint_without_key_and_restore_anonymously(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            project.mkdir()
+            (project / "README.md").write_text(
+                "This workspace is intentionally public.",
+                encoding="utf-8",
+            )
+            publication = {
+                "title": "Public Relay example",
+                "description": "A reviewed workspace that anyone can restore.",
+            }
+            key_dir = base / "keys"
+            created = json.loads(
+                self.run_script(
+                    CREATE,
+                    "--root",
+                    str(project),
+                    "--output-dir",
+                    str(base / "out"),
+                    "--visibility",
+                    "public",
+                    "--public-title",
+                    publication["title"],
+                    "--public-description",
+                    publication["description"],
+                    "--yes",
+                    "--json",
+                    env={"RELAY_KEYS_DIR": str(key_dir)},
+                ).stdout
+            )
+
+            archive_path = Path(created["archive"])
+            self.assertEqual(created["visibility"], "public")
+            self.assertEqual(created["publication"], publication)
+            self.assertEqual(created["publicFiles"], ["README.md"])
+            self.assertEqual(
+                created["publicManifestMetadata"]["publication"],
+                publication,
+            )
+            self.assertFalse(created["encrypted"])
+            self.assertEqual(created["encryptionVersion"], 0)
+            self.assertEqual(created["cipher"], "none")
+            self.assertIsNone(created["keyMode"])
+            self.assertFalse(created["keyGenerated"])
+            self.assertFalse(created["keyStored"])
+            self.assertIsNone(created["keyFile"])
+            self.assertTrue(archive_path.name.endswith(".relay-public.tar.gz"))
+            self.assertFalse(key_dir.exists())
+            self.assertFalse(archive_path.read_bytes().startswith(b"RELAYCP2\n"))
+
+            with tarfile.open(archive_path, "r:gz") as archive:
+                manifest_file = archive.extractfile(
+                    ".agent-checkpoint/manifest.json"
+                )
+                self.assertIsNotNone(manifest_file)
+                manifest = json.load(manifest_file)
+                handoff_file = archive.extractfile(
+                    ".agent-checkpoint/HANDOFF.md"
+                )
+                self.assertIsNotNone(handoff_file)
+                handoff = handoff_file.read().decode("utf-8")
+            self.assertEqual(manifest["formatVersion"], 2)
+            self.assertEqual(manifest["visibility"], "public")
+            self.assertEqual(manifest["publication"], publication)
+            self.assertEqual(manifest["workspace"], "Public workspace")
+            self.assertEqual(manifest["label"], publication["title"])
+            self.assertIsNone(manifest["baseSnapshot"])
+            self.assertEqual(manifest["exclusions"], [])
+            self.assertNotIn("remote", manifest["git"])
+            self.assertIn(publication["title"], handoff)
+            self.assertIn(publication["description"], handoff)
+
+            with archive_server(
+                archive_path,
+                checkpoint_id=created["checkpointId"],
+                publication=publication,
+                uppercase_checksum=True,
+            ) as url:
+                restored = json.loads(
+                    self.run_script(
+                        RESTORE,
+                        "--checkpoint",
+                        url,
+                        "--destination",
+                        str(base / "restored"),
+                        "--new-workspace",
+                        "--json",
+                        env={"RELAY_KEYS_DIR": str(key_dir)},
+                    ).stdout
+                )
+            self.assertEqual(restored["visibility"], "public")
+            self.assertEqual(restored["encryptionVersion"], 0)
+            self.assertFalse(restored["encrypted"])
+            self.assertFalse(restored["keyStored"])
+            self.assertEqual(restored["publication"], publication)
+            self.assertEqual(
+                (base / "restored" / "README.md").read_text(encoding="utf-8"),
+                "This workspace is intentionally public.",
+            )
+            self.assertFalse(key_dir.exists())
+
+            mismatched_destination = base / "mismatched"
+            with archive_server(
+                archive_path,
+                checkpoint_id="cp_different01",
+                publication=publication,
+                send_checkpoint_id_header=False,
+            ) as url:
+                mismatched = self.run_script(
+                    RESTORE,
+                    "--checkpoint",
+                    url,
+                    "--destination",
+                    str(mismatched_destination),
+                    "--new-workspace",
+                    check=False,
+                )
+            self.assertNotEqual(mismatched.returncode, 0)
+            self.assertIn(
+                "manifest ID does not match Relay metadata",
+                mismatched.stderr,
+            )
+            self.assertFalse(mismatched_destination.exists())
+
+            header_mismatched_destination = base / "header-mismatched"
+            with archive_server(
+                archive_path,
+                checkpoint_id=created["checkpointId"],
+                header_checkpoint_id="cp_different01",
+                publication=publication,
+            ) as url:
+                header_mismatched = self.run_script(
+                    RESTORE,
+                    "--checkpoint",
+                    url,
+                    "--destination",
+                    str(header_mismatched_destination),
+                    "--new-workspace",
+                    check=False,
+                )
+            self.assertNotEqual(header_mismatched.returncode, 0)
+            self.assertIn(
+                "Relay checkpoint ID does not match the requested checkpoint",
+                header_mismatched.stderr,
+            )
+            self.assertFalse(header_mismatched_destination.exists())
+
+    def test_public_create_requires_metadata_and_rejects_key_options(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "project"
+            project.mkdir()
+            (project / "README.md").write_text("public", encoding="utf-8")
+            missing_metadata = self.run_script(
+                CREATE,
+                "--root",
+                str(project),
+                "--visibility",
+                "public",
+                "--dry-run",
+                "--json",
+                check=False,
+            )
+            self.assertNotEqual(missing_metadata.returncode, 0)
+            self.assertIn(
+                "require both --public-title and --public-description",
+                missing_metadata.stderr,
+            )
+
+            key_option = self.run_script(
+                CREATE,
+                "--root",
+                str(project),
+                "--visibility",
+                "public",
+                "--public-title",
+                "Public example",
+                "--public-description",
+                "Reviewed public workspace.",
+                "--prompt-key",
+                "--dry-run",
+                "--json",
+                check=False,
+            )
+            self.assertNotEqual(key_option.returncode, 0)
+            self.assertIn("Public checkpoints do not use", key_option.stderr)
+
+            preview = json.loads(
+                self.run_script(
+                    CREATE,
+                    "--root",
+                    str(project),
+                    "--visibility",
+                    "public",
+                    "--public-title",
+                    "Public example",
+                    "--public-description",
+                    "Reviewed public workspace.",
+                    "--dry-run",
+                    "--json",
+                ).stdout
+            )
+            self.assertEqual(preview["publicFiles"], ["README.md"])
+            self.assertEqual(
+                preview["publicManifestMetadata"]["visibility"],
+                "public",
+            )
+
+    def test_direct_public_confirmation_lists_files_and_manifest_metadata(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            (project / "nested").mkdir(parents=True)
+            (project / "nested" / "main.py").write_text(
+                "print('public')",
+                encoding="utf-8",
+            )
+
+            created = self.run_script(
+                CREATE,
+                "--root",
+                str(project),
+                "--output-dir",
+                str(base / "out"),
+                "--visibility",
+                "public",
+                "--public-title",
+                "Public example",
+                "--public-description",
+                "Reviewed public workspace.",
+                input_text="public\n",
+            )
+
+            self.assertIn("Public manifest metadata:", created.stdout)
+            self.assertIn('"visibility": "public"', created.stdout)
+            self.assertIn("Files becoming readable (1):", created.stdout)
+            self.assertIn("  - nested/main.py", created.stdout)
+
+    def test_direct_public_cancellation_sends_no_upload(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            project.mkdir()
+            (project / "README.md").write_text("review first", encoding="utf-8")
+            token = "rly_" + "2" * 64
+
+            with upload_server(token) as (api_url, requests):
+                cancelled = self.run_script(
+                    CREATE,
+                    "--root",
+                    str(project),
+                    "--output-dir",
+                    str(base / "out"),
+                    "--visibility",
+                    "public",
+                    "--public-title",
+                    "Public example",
+                    "--public-description",
+                    "Reviewed public workspace.",
+                    "--upload",
+                    "--api-url",
+                    api_url,
+                    "--api-token",
+                    token,
+                    input_text="cancel\n",
+                    check=False,
+                )
+
+            self.assertNotEqual(cancelled.returncode, 0)
+            self.assertIn("cancelled", cancelled.stderr.lower())
+            self.assertEqual(requests, [])
+            self.assertFalse(any((base / "out").glob("*.relay-public.tar.gz")))
+
+    def test_public_create_scans_large_binary_content_for_secrets(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            project.mkdir()
+            fake_key = b"sk-proj-abcdefghijklmnopqrstuvwxyz"
+            (project / "large.bin").write_bytes(
+                b"\0" * 4096 + b"x" * (2 * 1024 * 1024) + b"\n" + fake_key
+            )
+
+            blocked = self.run_script(
+                CREATE,
+                "--root",
+                str(project),
+                "--output-dir",
+                str(base / "out"),
+                "--visibility",
+                "public",
+                "--public-title",
+                "Reviewed workspace",
+                "--public-description",
+                "A workspace reviewed for public release.",
+                check=False,
+            )
+
+            self.assertNotEqual(blocked.returncode, 0)
+            self.assertIn("API key", blocked.stderr)
+            self.assertFalse(any((base / "out").glob("*.relay-public.tar.gz")))
+
+    def test_public_scan_isolates_adjacent_file_boundaries(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            plaintext = base / "private.tar.gz"
+            output = base / "public.tar.gz"
+            checkpoint_id = "cp_boundary01"
+            contents = {
+                "a.txt": b"A",
+                "b.txt": b"sk-proj-abcdefghijklmnopqrstuvwxyz",
+            }
+            records = []
+            for path, data in contents.items():
+                records.append(
+                    {
+                        "path": path,
+                        "size": len(data),
+                        "mode": 0o644,
+                        "sha256": (
+                            f"sha256:{hashlib.sha256(data).hexdigest()}"
+                        ),
+                    }
+                )
+            tree_material = "".join(
+                f"{record['path']}\0"
+                f"{record['sha256'].removeprefix('sha256:')}\n"
+                for record in records
+            ).encode()
+            manifest = {
+                "checkpointId": checkpoint_id,
+                "files": records,
+                "treeHash": (
+                    f"sha256:{hashlib.sha256(tree_material).hexdigest()}"
+                ),
+                "stacks": [],
+                "git": {"isRepository": False},
+            }
+            with tarfile.open(plaintext, "w:gz") as archive:
+                for name, data in {
+                    **contents,
+                    ".agent-checkpoint/manifest.json": json.dumps(
+                        manifest
+                    ).encode("utf-8"),
+                    ".agent-checkpoint/HANDOFF.md": b"# Handoff\n",
+                }.items():
+                    member = tarfile.TarInfo(name)
+                    member.size = len(data)
+                    member.mode = 0o600
+                    archive.addfile(member, io.BytesIO(data))
+
+            sys.path.insert(0, str(SCRIPTS))
+            try:
+                from public_checkpoint import (
+                    PublicCheckpointError,
+                    canonicalize_public_archive,
+                )
+            finally:
+                sys.path.remove(str(SCRIPTS))
+
+            with self.assertRaisesRegex(PublicCheckpointError, "API key"):
+                canonicalize_public_archive(
+                    plaintext,
+                    output,
+                    checkpoint_id=checkpoint_id,
+                    title="Boundary test",
+                    description="Adjacent files remain isolated while scanning.",
+                )
+            self.assertFalse(output.exists())
+
+    def test_public_upload_requires_explicit_publish_scope(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            project.mkdir()
+            (project / "README.md").write_text("public", encoding="utf-8")
+            api_url = "https://relay.example"
+            credentials = base / "credentials.json"
+            credentials.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "sites": {
+                            api_url: {
+                                "accessToken": "rly_" + "a" * 64,
+                                "expiresAt": "2099-01-01T00:00:00+00:00",
+                                "scopes": (
+                                    "checkpoints:read checkpoints:write "
+                                    "checkpoints:share"
+                                ),
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            credentials.chmod(0o600)
+            result = self.run_script(
+                CREATE,
+                "--root",
+                str(project),
+                "--output-dir",
+                str(base / "out"),
+                "--visibility",
+                "public",
+                "--public-title",
+                "Public example",
+                "--public-description",
+                "Reviewed public workspace.",
+                "--upload",
+                "--api-url",
+                api_url,
+                "--json",
+                check=False,
+                env={"RELAY_CREDENTIALS_FILE": str(credentials)},
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("lacks checkpoints:publish", result.stderr)
+            self.assertIn("relay_auth.py login --publish", result.stderr)
+            self.assertFalse((base / "out").exists())
 
     def test_shared_agent_metadata_requires_name_and_description(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -775,6 +1202,63 @@ fs.writeFileSync(output, Buffer.concat([
             self.assertNotEqual(result.returncode, 0)
             self.assertFalse((base / "escape.txt").exists())
 
+    def test_restore_rejects_windows_unsafe_member_names(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            for index, unsafe_name in enumerate(
+                ("CON", "file.", "file:stream", 'bad"name', "bad?name")
+            ):
+                with self.subTest(unsafe_name=unsafe_name):
+                    archive = base / f"unsafe-{index}.tar.gz"
+                    with tarfile.open(archive, "w:gz") as handle:
+                        data = b"unsafe"
+                        member = tarfile.TarInfo(unsafe_name)
+                        member.size = len(data)
+                        handle.addfile(member, io.BytesIO(data))
+                    destination = base / f"restored-{index}"
+                    with archive_server(archive) as url:
+                        result = self.run_script(
+                            RESTORE,
+                            "--checkpoint",
+                            url,
+                            "--destination",
+                            str(destination),
+                            "--new-workspace",
+                            check=False,
+                        )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(destination.exists())
+
+    def test_restore_rejects_case_insensitive_path_collisions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            collision_sets = (
+                ("Readme", "README"),
+                ("foo", "FOO/bar"),
+            )
+            for index, names in enumerate(collision_sets):
+                with self.subTest(names=names):
+                    archive = base / f"collision-{index}.tar.gz"
+                    with tarfile.open(archive, "w:gz") as handle:
+                        for name in names:
+                            data = name.encode("utf-8")
+                            member = tarfile.TarInfo(name)
+                            member.size = len(data)
+                            handle.addfile(member, io.BytesIO(data))
+                    destination = base / f"collision-restored-{index}"
+                    with archive_server(archive) as url:
+                        result = self.run_script(
+                            RESTORE,
+                            "--checkpoint",
+                            url,
+                            "--destination",
+                            str(destination),
+                            "--new-workspace",
+                            check=False,
+                        )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(destination.exists())
+
     def test_create_uploads_with_bearer_token(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
@@ -836,6 +1320,378 @@ fs.writeFileSync(output, Buffer.concat([
                 if request["method"] == "PUT"
             ))
             self.assertFalse(payload["keyStored"])
+
+    def test_publish_private_checkpoint_uses_recovery_key_only_locally(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            project.mkdir()
+            (project / "main.py").write_text(
+                "print('safe public workspace')",
+                encoding="utf-8",
+            )
+            created = json.loads(
+                self.run_script(
+                    CREATE,
+                    "--root",
+                    str(project),
+                    "--output-dir",
+                    str(base / "private"),
+                    "--json",
+                    input_text=f"{CHECKPOINT_KEY}\n",
+                ).stdout
+            )
+            key_file = base / "checkpoint.key"
+            key_file.write_text(CHECKPOINT_KEY + "\n", encoding="utf-8")
+            key_file.chmod(0o600)
+            token = "rly_" + "e" * 64
+            title = "Reviewed public handoff"
+            description = "A sanitized workspace published for keyless restore."
+
+            with publication_server(
+                Path(created["archive"]),
+                expected_token=token,
+                checkpoint_id=created["checkpointId"],
+                uppercase_checksum=True,
+            ) as (api_url, requests):
+                publication_process = self.run_script(
+                    PUBLISH,
+                    "--checkpoint",
+                    created["checkpointId"],
+                    "--public-title",
+                    title,
+                    "--public-description",
+                    description,
+                    "--api-url",
+                    api_url,
+                    "--api-token",
+                    token,
+                    "--key-file",
+                    str(key_file),
+                    "--yes",
+                    "--json",
+                    check=False,
+                )
+            self.assertEqual(
+                publication_process.returncode,
+                0,
+                publication_process.stderr,
+            )
+            published = json.loads(publication_process.stdout)
+
+            self.assertEqual(published["visibility"], "public")
+            self.assertEqual(
+                published["publication"],
+                {"title": title, "description": description},
+            )
+            self.assertEqual(
+                published["sourceCiphertextChecksum"],
+                created["archiveSha256"],
+            )
+            self.assertTrue(published["keyStored"])
+            self.assertFalse(published["keySentToRelay"])
+            self.assertEqual(published["publicFiles"], ["main.py"])
+            self.assertEqual(
+                published["publicManifestMetadata"]["publication"],
+                {"title": title, "description": description},
+            )
+            self.assertNotIn(CHECKPOINT_KEY, json.dumps(published))
+
+            initialized_request = next(
+                request
+                for request in requests
+                if request["method"] == "POST"
+                and request["path"] == "/api/checkpoints/uploads"
+            )
+            initialized = json.loads(initialized_request["body"])
+            self.assertEqual(initialized["operation"], "publish-existing")
+            self.assertEqual(initialized["publicTitle"], title)
+            self.assertEqual(initialized["publicDescription"], description)
+            self.assertEqual(
+                initialized["sourceCiphertextChecksum"],
+                created["archiveSha256"],
+            )
+            self.assertEqual(initialized["encryptionVersion"], 0)
+            self.assertEqual(initialized["cipher"], "none")
+            self.assertNotIn("key", " ".join(initialized).lower())
+
+            public_bytes = b"".join(
+                request["body"]
+                for request in requests
+                if request["method"] == "PUT"
+            )
+            self.assertTrue(public_bytes.startswith(b"\x1f\x8b"))
+            self.assertNotIn(b"RELAYCP2\n", public_bytes)
+            self.assertNotIn(CHECKPOINT_KEY.encode("utf-8"), public_bytes)
+            with tarfile.open(fileobj=io.BytesIO(public_bytes), mode="r:gz") as archive:
+                for member in archive.getmembers():
+                    if not member.isfile():
+                        continue
+                    member_file = archive.extractfile(member)
+                    self.assertIsNotNone(member_file)
+                    self.assertNotIn(
+                        CHECKPOINT_KEY.encode("utf-8"),
+                        member_file.read(),
+                    )
+                restored_file = archive.extractfile("main.py")
+                self.assertIsNotNone(restored_file)
+                self.assertEqual(
+                    restored_file.read(),
+                    b"print('safe public workspace')",
+                )
+                manifest_file = archive.extractfile(
+                    ".agent-checkpoint/manifest.json"
+                )
+                self.assertIsNotNone(manifest_file)
+                manifest = json.load(manifest_file)
+            self.assertEqual(manifest["visibility"], "public")
+            self.assertEqual(
+                manifest["publication"],
+                {"title": title, "description": description},
+            )
+            for request in requests:
+                self.assertNotIn(
+                    CHECKPOINT_KEY,
+                    str(request["path"]),
+                )
+                self.assertNotIn(
+                    CHECKPOINT_KEY,
+                    json.dumps(request["headers"]),
+                )
+                self.assertNotIn(
+                    CHECKPOINT_KEY.encode("utf-8"),
+                    request["body"],
+                )
+
+            wrong_key_file = base / "wrong.key"
+            wrong_key_file.write_text(OTHER_KEY + "\n", encoding="utf-8")
+            wrong_key_file.chmod(0o600)
+            with publication_server(
+                Path(created["archive"]),
+                expected_token=token,
+                checkpoint_id=created["checkpointId"],
+            ) as (api_url, wrong_key_requests):
+                failed = self.run_script(
+                    PUBLISH,
+                    "--checkpoint",
+                    created["checkpointId"],
+                    "--public-title",
+                    title,
+                    "--public-description",
+                    description,
+                    "--api-url",
+                    api_url,
+                    "--api-token",
+                    token,
+                    "--key-file",
+                    str(wrong_key_file),
+                    "--yes",
+                    "--json",
+                    check=False,
+                )
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertIn("authentication failed", failed.stderr.lower())
+            self.assertEqual(
+                [request["method"] for request in wrong_key_requests],
+                ["GET"],
+            )
+
+    def test_publish_blocks_literal_recovery_key_before_upload(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            project.mkdir()
+            (project / "notes.txt").write_text(
+                f"Local recovery phrase: {CHECKPOINT_KEY}",
+                encoding="utf-8",
+            )
+            created = json.loads(
+                self.run_script(
+                    CREATE,
+                    "--root",
+                    str(project),
+                    "--output-dir",
+                    str(base / "private"),
+                    "--json",
+                    input_text=f"{CHECKPOINT_KEY}\n",
+                ).stdout
+            )
+            key_file = base / "checkpoint.key"
+            key_file.write_text(CHECKPOINT_KEY + "\n", encoding="utf-8")
+            key_file.chmod(0o600)
+            token = "rly_" + "f" * 64
+
+            with publication_server(
+                Path(created["archive"]),
+                expected_token=token,
+                checkpoint_id=created["checkpointId"],
+            ) as (api_url, requests):
+                blocked = self.run_script(
+                    PUBLISH,
+                    "--checkpoint",
+                    created["checkpointId"],
+                    "--public-title",
+                    "Reviewed handoff",
+                    "--public-description",
+                    "A workspace reviewed for public release.",
+                    "--api-url",
+                    api_url,
+                    "--api-token",
+                    token,
+                    "--key-file",
+                    str(key_file),
+                    "--yes",
+                    "--json",
+                    check=False,
+                )
+
+            self.assertNotEqual(blocked.returncode, 0)
+            self.assertIn("recovery key", blocked.stderr.lower())
+            self.assertNotIn(CHECKPOINT_KEY, blocked.stdout)
+            self.assertNotIn(CHECKPOINT_KEY, blocked.stderr)
+            self.assertEqual(
+                [request["method"] for request in requests],
+                ["GET"],
+            )
+
+    def test_publish_confirmation_lists_exact_public_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            (project / "nested").mkdir(parents=True)
+            (project / "nested" / "main.py").write_text(
+                "print('review me')",
+                encoding="utf-8",
+            )
+            created = json.loads(
+                self.run_script(
+                    CREATE,
+                    "--root",
+                    str(project),
+                    "--output-dir",
+                    str(base / "private"),
+                    "--json",
+                    input_text=f"{CHECKPOINT_KEY}\n",
+                ).stdout
+            )
+            key_file = base / "checkpoint.key"
+            key_file.write_text(CHECKPOINT_KEY + "\n", encoding="utf-8")
+            key_file.chmod(0o600)
+            token = "rly_" + "1" * 64
+
+            with publication_server(
+                Path(created["archive"]),
+                expected_token=token,
+                checkpoint_id=created["checkpointId"],
+            ) as (api_url, _requests):
+                published = self.run_script(
+                    PUBLISH,
+                    "--checkpoint",
+                    created["checkpointId"],
+                    "--public-title",
+                    "Reviewed handoff",
+                    "--public-description",
+                    "A workspace reviewed for public release.",
+                    "--api-url",
+                    api_url,
+                    "--api-token",
+                    token,
+                    "--key-file",
+                    str(key_file),
+                    input_text="publish\n",
+                )
+
+            self.assertIn("Files becoming readable (1):", published.stdout)
+            self.assertIn("Public manifest metadata:", published.stdout)
+            self.assertIn("  - nested/main.py", published.stdout)
+
+    def test_publish_rejects_case_colliding_legacy_private_archive(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            checkpoint_id = "cp_casecollision"
+            plaintext = base / "legacy.tar.gz"
+            encrypted = base / "legacy.relay"
+            records = []
+            contents = {
+                "Readme": b"first",
+                "README": b"second",
+            }
+            for path, data in contents.items():
+                records.append(
+                    {
+                        "path": path,
+                        "size": len(data),
+                        "mode": 0o644,
+                        "sha256": (
+                            f"sha256:{hashlib.sha256(data).hexdigest()}"
+                        ),
+                    }
+                )
+            manifest = {
+                "checkpointId": checkpoint_id,
+                "files": records,
+                "treeHash": "sha256:" + "0" * 64,
+                "stacks": [],
+                "git": {"isRepository": False},
+            }
+            with tarfile.open(plaintext, "w:gz") as archive:
+                for name, data in {
+                    **contents,
+                    ".agent-checkpoint/manifest.json": json.dumps(
+                        manifest
+                    ).encode("utf-8"),
+                    ".agent-checkpoint/HANDOFF.md": b"# Handoff\n",
+                }.items():
+                    member = tarfile.TarInfo(name)
+                    member.size = len(data)
+                    member.mode = 0o600
+                    archive.addfile(member, io.BytesIO(data))
+
+            sys.path.insert(0, str(SCRIPTS))
+            try:
+                from relay_crypto import encrypt_checkpoint
+            finally:
+                sys.path.remove(str(SCRIPTS))
+            encrypt_checkpoint(
+                plaintext,
+                encrypted,
+                checkpoint_id,
+                CHECKPOINT_KEY.encode("utf-8"),
+            )
+            key_file = base / "checkpoint.key"
+            key_file.write_text(CHECKPOINT_KEY + "\n", encoding="utf-8")
+            key_file.chmod(0o600)
+            token = "rly_" + "3" * 64
+
+            with publication_server(
+                encrypted,
+                expected_token=token,
+                checkpoint_id=checkpoint_id,
+            ) as (api_url, requests):
+                blocked = self.run_script(
+                    PUBLISH,
+                    "--checkpoint",
+                    checkpoint_id,
+                    "--public-title",
+                    "Reviewed handoff",
+                    "--public-description",
+                    "A workspace reviewed for public release.",
+                    "--api-url",
+                    api_url,
+                    "--api-token",
+                    token,
+                    "--key-file",
+                    str(key_file),
+                    "--yes",
+                    check=False,
+                )
+
+            self.assertNotEqual(blocked.returncode, 0)
+            self.assertIn("case-insensitive", blocked.stderr)
+            self.assertEqual(
+                [request["method"] for request in requests],
+                ["GET"],
+            )
 
     def test_existing_large_archive_retries_without_key_or_oversized_request(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -997,21 +1853,54 @@ fs.writeFileSync(output, Buffer.concat([
 
 
 @contextmanager
-def archive_server(archive: Path, agent: dict[str, str] | None = None):
+def archive_server(
+    archive: Path,
+    agent: dict[str, str] | None = None,
+    *,
+    checkpoint_id: str | None = None,
+    header_checkpoint_id: str | None = None,
+    publication: dict[str, str] | None = None,
+    uppercase_checksum: bool = False,
+    send_checkpoint_id_header: bool = True,
+):
     archive_bytes = archive.read_bytes()
     checksum = hashlib.sha256(archive_bytes).hexdigest()
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             self.send_response(200)
-            content_type = (
-                "application/vnd.relay.checkpoint"
-                if archive_bytes.startswith(b"RELAYCP2\n")
-                else "application/gzip"
-            )
+            if publication:
+                content_type = (
+                    "application/vnd.relay.public-checkpoint+gzip"
+                )
+            else:
+                content_type = (
+                    "application/vnd.relay.checkpoint"
+                    if archive_bytes.startswith(b"RELAYCP2\n")
+                    else "application/gzip"
+                )
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(archive_bytes)))
-            self.send_header("X-Checkpoint-Sha256", f"sha256:{checksum}")
+            checksum_header = (
+                f"SHA256:{checksum.upper()}"
+                if uppercase_checksum
+                else f"sha256:{checksum}"
+            )
+            self.send_header("X-Checkpoint-Sha256", checksum_header)
+            response_checkpoint_id = header_checkpoint_id or checkpoint_id
+            if response_checkpoint_id and send_checkpoint_id_header:
+                self.send_header("X-Checkpoint-Id", response_checkpoint_id)
+            if publication:
+                self.send_header("X-Checkpoint-Encryption", "0")
+                self.send_header("X-Relay-Public-Format", "1")
+                self.send_header(
+                    "X-Relay-Public-Title",
+                    urllib.parse.quote(publication["title"], safe=""),
+                )
+                self.send_header(
+                    "X-Relay-Public-Description",
+                    urllib.parse.quote(publication["description"], safe=""),
+                )
             if agent:
                 self.send_header(
                     "X-Relay-Agent-Name",
@@ -1032,7 +1921,12 @@ def archive_server(archive: Path, agent: dict[str, str] | None = None):
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        yield f"http://127.0.0.1:{server.server_port}/api/shared/test"
+        route = (
+            f"/api/public/checkpoints/{checkpoint_id}/download"
+            if publication and checkpoint_id
+            else "/api/shared/test"
+        )
+        yield f"http://127.0.0.1:{server.server_port}{route}"
     finally:
         server.shutdown()
         thread.join()
@@ -1141,6 +2035,173 @@ def upload_server(expected_token: str):
 
         def _json(self, status: int, payload: dict[str, object]):
             response = json.dumps(payload).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response)))
+            self.end_headers()
+            self.wfile.write(response)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}", requests
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+
+@contextmanager
+def publication_server(
+    private_archive: Path,
+    *,
+    expected_token: str,
+    checkpoint_id: str,
+    uppercase_checksum: bool = False,
+):
+    requests: list[dict[str, object]] = []
+    private_bytes = private_archive.read_bytes()
+    private_checksum = f"sha256:{hashlib.sha256(private_bytes).hexdigest()}"
+    upload: dict[str, object] = {}
+    chunks: dict[int, bytes] = {}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self._record("GET", b"")
+            if not self._authorized():
+                self._json(401, {"error": "unauthorized"})
+                return
+            if self.path == f"/api/checkpoints/{checkpoint_id}/download":
+                self.send_response(200)
+                self.send_header(
+                    "Content-Type",
+                    "application/vnd.relay.checkpoint",
+                )
+                self.send_header("Content-Length", str(len(private_bytes)))
+                self.send_header("X-Checkpoint-Id", checkpoint_id)
+                self.send_header(
+                    "X-Checkpoint-Sha256",
+                    private_checksum.upper()
+                    if uppercase_checksum
+                    else private_checksum,
+                )
+                self.end_headers()
+                self.wfile.write(private_bytes)
+                return
+            if self.path == f"/api/checkpoints/{checkpoint_id}":
+                self._json(200, {"checkpoint": self._checkpoint()})
+                return
+            self._json(404, {"error": "not_found"})
+
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length)
+            self._record("POST", body)
+            if not self._authorized():
+                self._json(401, {"error": "unauthorized"})
+                return
+            if self.path == "/api/checkpoints/uploads":
+                upload.update(json.loads(body))
+                chunk_size = 1024 * 1024
+                size = int(upload["sizeBytes"])
+                self._json(
+                    201,
+                    {
+                        "uploadId": "b" * 32,
+                        "checkpointId": checkpoint_id,
+                        "chunkSize": chunk_size,
+                        "partCount": (size + chunk_size - 1) // chunk_size,
+                        "sizeBytes": size,
+                        "expiresAt": "2099-01-01T00:00:00.000Z",
+                    },
+                )
+                return
+            if self.path == f"/api/checkpoints/uploads/{'b' * 32}/complete":
+                public_bytes = b"".join(
+                    chunks[index] for index in sorted(chunks)
+                )
+                if len(public_bytes) != int(upload["sizeBytes"]):
+                    self._json(400, {"error": "size"})
+                    return
+                actual_checksum = (
+                    f"sha256:{hashlib.sha256(public_bytes).hexdigest()}"
+                )
+                if actual_checksum != upload["checksum"]:
+                    self._json(400, {"error": "checksum"})
+                    return
+                self._json(201, {"checkpoint": self._checkpoint()})
+                return
+            self._json(404, {"error": "not_found"})
+
+        def do_PUT(self):
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length)
+            self._record("PUT", body)
+            if not self._authorized():
+                self._json(401, {"error": "unauthorized"})
+                return
+            part_number = int(self.path.rsplit("/", 1)[-1])
+            checksum = f"sha256:{hashlib.sha256(body).hexdigest()}"
+            if self.headers.get("X-Chunk-Sha256") != checksum:
+                self._json(400, {"error": "checksum"})
+                return
+            chunks[part_number] = body
+            self._json(
+                200,
+                {
+                    "partNumber": part_number,
+                    "sizeBytes": len(body),
+                    "checksum": checksum,
+                    "etag": checksum[-32:],
+                },
+            )
+
+        def do_DELETE(self):
+            self._record("DELETE", b"")
+            self.send_response(204)
+            self.end_headers()
+
+        def _checkpoint(self):
+            return {
+                "id": checkpoint_id,
+                "status": "ready",
+                "checksum": private_checksum,
+                "sizeBytes": len(private_bytes),
+                "encryptionVersion": 2,
+                "cipher": "AES-256-GCM",
+                "visibility": "public",
+                "publication": {
+                    "title": upload["publicTitle"],
+                    "description": upload["publicDescription"],
+                    "checksum": upload["checksum"],
+                    "sizeBytes": upload["sizeBytes"],
+                    "formatVersion": upload["publicFormatVersion"],
+                    "sourceCiphertextChecksum": upload[
+                        "sourceCiphertextChecksum"
+                    ],
+                    "publishedAt": "2026-07-23T00:00:00.000Z",
+                },
+            }
+
+        def _authorized(self):
+            return self.headers.get("Authorization") == f"Bearer {expected_token}"
+
+        def _record(self, method: str, body: bytes):
+            requests.append(
+                {
+                    "method": method,
+                    "path": self.path,
+                    "headers": dict(self.headers.items()),
+                    "body": body,
+                }
+            )
+
+        def _json(self, status: int, payload: dict[str, object]):
+            response = json.dumps(payload).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(response)))

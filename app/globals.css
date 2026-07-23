@@ -99,32 +99,15 @@ kbd {
 /* Shared brand */
 
 .relay-mark {
-  width: 20px;
+  width: 24px;
   height: 20px;
   display: inline-flex;
-  align-items: flex-end;
-  justify-content: center;
-  gap: 2px;
   flex: 0 0 auto;
-  color: currentColor;
+  background: url("/favicon.svg") center / contain no-repeat;
 }
 
 .relay-mark span {
-  width: 4px;
-  background: currentColor;
-  border-radius: 1px 1px 0 0;
-}
-
-.relay-mark span:nth-child(1) {
-  height: 7px;
-}
-
-.relay-mark span:nth-child(2) {
-  height: 12px;
-}
-
-.relay-mark span:nth-child(3) {
-  height: 17px;
+  display: none;
 }
 
 /* Public landing */
@@ -187,6 +170,7 @@ kbd {
   font-size: 17px;
   font-weight: 600;
   letter-spacing: -0.04em;
+  text-transform: lowercase;
 }
 
 .landing-nav {
@@ -1663,6 +1647,7 @@ kbd {
 
 .badge,
 .metadata-mode,
+.visibility-badge,
 .filter-pill {
   width: fit-content;
   display: inline-flex;
@@ -1677,6 +1662,13 @@ kbd {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 999px;
+}
+
+.badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
 }
 
 .badge {
@@ -1741,6 +1733,23 @@ kbd {
   border-color: #c7e1ff;
 }
 
+.visibility-badge {
+  min-height: 20px;
+  padding: 0 7px;
+}
+
+.visibility-badge.private {
+  color: var(--amber);
+  background: var(--amber-bg);
+  border-color: #efddb0;
+}
+
+.visibility-badge.public {
+  color: var(--blue);
+  background: var(--blue-bg);
+  border-color: #c7e1ff;
+}
+
 .entity-icon {
   width: 38px;
   height: 38px;
@@ -1752,6 +1761,12 @@ kbd {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 7px;
+}
+
+.entity-icon.public {
+  color: var(--blue);
+  background: var(--blue-bg);
+  border-color: #c7e1ff;
 }
 
 .latest-meta {
@@ -1785,7 +1800,9 @@ kbd {
 
 .latest-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 7px;
 }
 
@@ -1830,7 +1847,7 @@ kbd {
 .data-table-header,
 .data-row {
   display: grid;
-  grid-template-columns: minmax(190px, 1.15fr) minmax(190px, 1fr) 120px 110px minmax(150px, auto);
+  grid-template-columns: minmax(190px, 1.15fr) minmax(190px, 1fr) 130px 110px minmax(240px, auto);
   gap: 18px;
   align-items: center;
   padding: 0 20px;
@@ -1932,6 +1949,7 @@ kbd {
 
 .row-controls {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 7px;
 }
@@ -2079,18 +2097,51 @@ kbd {
   color: var(--green);
 }
 
+.public-boundary .security-icon {
+  background: var(--blue);
+}
+
+.sharing-grid {
+  display: grid;
+  gap: 24px;
+}
+
 .share-table article {
   min-height: 70px;
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) 150px auto;
+  grid-template-columns: minmax(240px, 1fr) minmax(170px, 0.75fr) auto;
   gap: 20px;
   align-items: center;
-  padding: 0 20px;
+  padding: 14px 20px;
   border-bottom: 1px solid var(--border);
 }
 
 .share-table article:last-child {
   border-bottom: 0;
+}
+
+.share-table .entity-cell > div > span {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 9px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.share-table article > .mono {
+  overflow: hidden;
+  color: var(--faint);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
 }
 
 /* Auth and device approval */
@@ -2622,7 +2673,7 @@ kbd {
 
   .data-table-header,
   .data-row {
-    grid-template-columns: minmax(180px, 1.15fr) minmax(180px, 1fr) 100px minmax(140px, auto);
+    grid-template-columns: minmax(180px, 1.15fr) minmax(180px, 1fr) 110px minmax(220px, auto);
   }
 
   .data-table-header > :nth-child(4),
@@ -3019,6 +3070,10 @@ kbd {
 
   .share-table .button {
     justify-self: start;
+  }
+
+  .share-actions {
+    justify-content: flex-start;
   }
 
   .setup-grid {

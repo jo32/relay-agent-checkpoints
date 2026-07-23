@@ -5,7 +5,7 @@ import {
   Check,
   Copy,
   Download,
-  KeyRound,
+  Globe2,
   Laptop,
   LockKeyhole,
   ShieldCheck,
@@ -14,7 +14,7 @@ import {
 import Link from "next/link";
 import { useState } from "react";
 
-const INSTALL_PROMPT_LABEL = "Create a secure Relay checkpoint of this workspace.";
+const INSTALL_PROMPT_LABEL = "Create a private Relay checkpoint of this workspace.";
 
 function installPrompt(origin: string) {
   const bundleUrl = `${origin}/skills/relay-checkpoint-skills.zip`;
@@ -78,16 +78,16 @@ export function RelayLanding() {
           <div className="hero-copy">
             <p className="landing-kicker">
               <ShieldCheck size={14} aria-hidden="true" />
-              Secure workspace continuity
+              Private by default · public by choice
             </p>
             <h1 id="landing-title">
-              Encrypted checkpoints
-              <span>for agent workspaces.</span>
+              Workspace checkpoints
+              <span>private or public.</span>
             </h1>
             <p className="hero-lede">
-              Relay lets an AI agent capture a project&rsquo;s files, context, and
-              handoff state in a locally encrypted checkpoint—then restore it in
-              another workspace without exposing the contents or recovery key to Relay.
+              Keep a checkpoint as locally encrypted ciphertext, or deliberately
+              publish a separately sanitized artifact for stable, anonymous,
+              keyless restore. You choose the boundary.
             </p>
 
             <div className="hero-actions">
@@ -115,7 +115,7 @@ export function RelayLanding() {
             </p>
           </div>
 
-          <div className="install-visual" aria-label="Relay encrypted checkpoint preview">
+          <div className="install-visual" aria-label="Relay private encrypted checkpoint preview">
             <div className="install-window">
               <div className="install-window-bar">
                 <span className="window-dots" aria-hidden="true">
@@ -123,7 +123,7 @@ export function RelayLanding() {
                   <i />
                   <i />
                 </span>
-                <span>relay / secure checkpoint</span>
+                <span>relay / private checkpoint</span>
                 <span className="verified-badge">
                   <ShieldCheck size={12} /> verified
                 </span>
@@ -159,7 +159,7 @@ export function RelayLanding() {
                   <span className="ready-pulse" aria-hidden="true" />
                   <div>
                     <strong>Checkpoint secured — key stays local</strong>
-                    <small>Relay stores ciphertext, never plaintext.</small>
+                    <small>Private mode stores ciphertext, never plaintext.</small>
                   </div>
                 </div>
               </div>
@@ -176,7 +176,7 @@ export function RelayLanding() {
               <LockKeyhole size={16} />
               <span>
                 <strong>Zero knowledge</strong>
-                Relay never gets your key
+                Private checkpoint keys never reach Relay
               </span>
             </div>
           </div>
@@ -185,11 +185,11 @@ export function RelayLanding() {
         <section className="trust-ribbon" aria-label="Relay promises">
           <div>
             <LockKeyhole size={15} />
-            <span><strong>AES-256-GCM</strong> — encrypted locally</span>
+            <span><strong>Private</strong> — AES-256-GCM ciphertext</span>
           </div>
           <div>
-            <KeyRound size={15} />
-            <span><strong>Zero knowledge</strong> — Relay never gets the key</span>
+            <Globe2 size={15} />
+            <span><strong>Public</strong> — intentionally readable, keyless restore</span>
           </div>
           <div>
             <ShieldCheck size={15} />
@@ -199,11 +199,11 @@ export function RelayLanding() {
 
         <section className="how-section" id="how-it-works" aria-labelledby="how-title">
           <div className="section-heading">
-            <p className="landing-kicker">Security from source to restore</p>
-            <h2 id="how-title">A checkpoint built to travel safely.</h2>
+            <p className="landing-kicker">A deliberate visibility boundary</p>
+            <h2 id="how-title">One workflow, two clear choices.</h2>
             <p>
-              Your agent filters the workspace, encrypts everything before it leaves
-              your machine, and proves the restored files are exactly what you saved.
+              Every checkpoint is filtered and verified locally. Private artifacts
+              remain encrypted; public artifacts are readable by design.
             </p>
           </div>
 
@@ -221,13 +221,13 @@ export function RelayLanding() {
 
             <article className="journey-card ask-card">
               <div className="journey-number">02</div>
-              <span className="journey-icon"><LockKeyhole size={19} /></span>
-              <p className="journey-status local">Zero knowledge</p>
-              <h3>Encrypt before upload</h3>
+              <span className="journey-icon"><Globe2 size={19} /></span>
+              <p className="journey-status local">Your choice</p>
+              <h3>Choose who can read it</h3>
               <p>
-                The checkpoint is sealed locally with AES-256-GCM. The recovery
-                key stays with you; Relay receives only opaque ciphertext and
-                minimal approved metadata.
+                Private checkpoints are sealed locally with AES-256-GCM. Public
+                checkpoints use no key and publish only the title, description,
+                metadata, and files you explicitly approve.
               </p>
             </article>
 
@@ -237,8 +237,8 @@ export function RelayLanding() {
               <p className="journey-status once">Cryptographically checked</p>
               <h3>Restore with proof</h3>
               <p>
-                Restore decrypts on your machine, rejects unsafe paths, and verifies
-                every file hash before handing the recovered workspace to a new agent.
+                Private restore decrypts locally. Public restore needs no sign-in or
+                key. Both paths reject unsafe paths and verify every file hash.
               </p>
             </article>
           </div>
@@ -246,26 +246,28 @@ export function RelayLanding() {
 
         <section className="first-backup-section" aria-labelledby="backup-title">
           <div className="backup-copy">
-            <p className="landing-kicker">Zero knowledge by design</p>
-            <h2 id="backup-title">Relay can store your checkpoint. It cannot read it.</h2>
+            <p className="landing-kicker">Private means private</p>
+            <h2 id="backup-title">Private ciphertext stays unreadable to Relay.</h2>
             <p>
-              The archive is encrypted before it leaves your workspace. Readable
-              file contents, workspace metadata, handoff notes, and the recovery key
-              never reach Relay&rsquo;s servers.
+              A private archive is encrypted before it leaves your workspace.
+              Publishing creates a separate readable artifact only after a local
+              preview and explicit confirmation; it never uploads the original key.
             </p>
             <div className="backup-facts">
               <span><Check size={14} /> AES-256-GCM encryption</span>
               <span><Check size={14} /> Secrets excluded before packing</span>
               <span><Check size={14} /> Recovery key stays local</span>
               <span><Check size={14} /> Every restored file is verified</span>
+              <span><Check size={14} /> Public artifacts are clearly labeled</span>
+              <span><Check size={14} /> Publication is effectively irreversible</span>
             </div>
           </div>
 
           <div className="backup-demo" aria-label="Relay checkpoint security example">
             <div className="backup-demo-header">
               <span className="status-dot" />
-              Checkpoint protection
-              <span>local security pipeline</span>
+              Private checkpoint protection
+              <span>private-mode example</span>
             </div>
             <div className="backup-message user">
               Create a secure checkpoint of this workspace.
@@ -292,27 +294,27 @@ export function RelayLanding() {
             <span><LockKeyhole size={28} /></span>
           </div>
           <div>
-            <p className="landing-kicker">Private by construction</p>
-            <h2 id="privacy-title">Your workspace stays yours—even while it travels.</h2>
+            <p className="landing-kicker">A boundary you can see</p>
+            <h2 id="privacy-title">Private is encrypted. Public is intentionally readable.</h2>
             <p>
-              Files are selected, sanitized, and encrypted on your machine.
-              Relay receives an opaque <code>.relay</code> file plus either the
-              agent profile you approved or a playful privacy-safe pseudonym—not
-              your source, readable workspace name, handoff notes, or recovery key.
+              Private mode sends an opaque <code>.relay</code> file plus approved
+              or pseudonymous agent metadata. Public mode sends a separate sanitized
+              archive plus the public title and description you approve. Anyone with
+              its stable URL can read and restore it without a key.
             </p>
           </div>
           <dl className="privacy-list">
             <div>
-              <dt>Encryption</dt>
-              <dd>AES-256-GCM, locally</dd>
+              <dt>Private mode</dt>
+              <dd>AES-256-GCM, locally keyed</dd>
             </div>
             <div>
-              <dt>Relay can read</dt>
-              <dd>ID, size, time, chosen agent profile</dd>
+              <dt>Public mode</dt>
+              <dd>Readable, permanent, keyless</dd>
             </div>
             <div>
-              <dt>Relay cannot read</dt>
-              <dd>Files, workspace metadata, recovery key</dd>
+              <dt>Agent metadata</dt>
+              <dd>Shared or pseudonymous, independently</dd>
             </div>
           </dl>
         </section>
@@ -321,7 +323,7 @@ export function RelayLanding() {
           <div>
             <p className="landing-kicker">Protect the next handoff</p>
             <h2 id="cta-title">Give your agent a secure place to resume.</h2>
-            <p>Install Relay, create a locally encrypted checkpoint, and restore it with cryptographic verification.</p>
+            <p>Install Relay, choose private or public, and restore with integrity verification.</p>
           </div>
           <div className="cta-actions">
             <button

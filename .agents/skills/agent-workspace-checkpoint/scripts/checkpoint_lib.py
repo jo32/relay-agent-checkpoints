@@ -10,6 +10,7 @@ import os
 import re
 import stat
 import subprocess
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Iterable
@@ -17,6 +18,14 @@ from typing import Iterable
 FORMAT_VERSION = 1
 MAX_FILE_SIZE = 100 * 1024 * 1024
 TEXT_SCAN_LIMIT = 2 * 1024 * 1024
+WINDOWS_RESERVED_NAMES = {
+    "con",
+    "prn",
+    "aux",
+    "nul",
+    *(f"com{index}" for index in range(1, 10)),
+    *(f"lpt{index}" for index in range(1, 10)),
+}
 
 DENY_DIRS = {
     ".git": "version-control internals",
@@ -231,6 +240,10 @@ def simple_ignored(path: str, patterns: Iterable[str]) -> bool:
 
 
 def mandatory_reason(path: str, source: Path, info: os.stat_result) -> str | None:
+    try:
+        validate_member_name(path)
+    except ValueError:
+        return "path is unsafe on a cross-platform restore"
     parts = PurePosixPath(path).parts
     for part in parts[:-1]:
         if part in DENY_DIRS:
@@ -343,6 +356,9 @@ def select_files(root: Path) -> tuple[list[SelectedFile], list[ExcludedFile], di
 
     included.sort(key=lambda item: item.path)
     excluded.sort(key=lambda item: item.path)
+    windows_paths: dict[str, str] = {}
+    for item in included:
+        record_windows_path(item.path, windows_paths)
     tree_material = "".join(f"{item.path}\0{item.sha256}\n" for item in included).encode()
     context = {
         "git": git,
@@ -355,15 +371,45 @@ def select_files(root: Path) -> tuple[list[SelectedFile], list[ExcludedFile], di
 
 
 def validate_member_name(name: str) -> str:
-    if not name or "\0" in name:
+    if (
+        not name
+        or "\0" in name
+        or "\\" in name
+        or re.match(r"^[A-Za-z]:", name)
+        or any(character in '<>"|?*' for character in name)
+        or any(ord(character) < 32 or ord(character) == 127 for character in name)
+    ):
         raise ValueError("Archive contains an empty or invalid member name")
     pure = PurePosixPath(name)
     if pure.is_absolute() or ".." in pure.parts:
         raise ValueError(f"Archive member escapes the destination: {name}")
+    for part in pure.parts:
+        windows_base = part.split(".", 1)[0].casefold()
+        if (
+            ":" in part
+            or part.endswith((".", " "))
+            or windows_base in WINDOWS_RESERVED_NAMES
+        ):
+            raise ValueError(
+                "Archive contains a member name that is unsafe on Windows"
+            )
     normalized = pure.as_posix()
     if normalized.startswith("../") or normalized == "..":
         raise ValueError(f"Archive member escapes the destination: {name}")
     return normalized
+
+
+def record_windows_path(name: str, paths: dict[str, str]) -> None:
+    parts = PurePosixPath(name).parts
+    for length in range(1, len(parts) + 1):
+        exact = "/".join(parts[:length])
+        folded = unicodedata.normalize("NFC", exact).casefold()
+        previous = paths.get(folded)
+        if previous is not None and previous != exact:
+            raise ValueError(
+                "Selected files collide on a case-insensitive filesystem"
+            )
+        paths[folded] = exact
 
 
 def json_bytes(value: object) -> bytes:

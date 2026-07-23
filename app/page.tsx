@@ -4,9 +4,9 @@ import { RelayLanding } from "./relay-landing";
 import RelayDashboard from "./relay-dashboard";
 
 export const metadata: Metadata = {
-  title: { absolute: "Relay — Encrypted checkpoints for agent workspaces." },
+  title: { absolute: "Relay — Private or public checkpoints for agent workspaces." },
   description:
-    "Capture, encrypt, and restore AI agent workspaces without exposing source files, workspace context, or recovery keys to Relay.",
+    "Keep agent workspace checkpoints locally encrypted, or intentionally publish a sanitized artifact for stable, keyless restore.",
 };
 
 export const dynamic = "force-dynamic";

@@ -129,7 +129,16 @@ def main() -> int:
         "archive": str(archive_path),
         "archiveSha256": f"sha256:{archive_hash}",
         "encrypted": encrypted,
-        "encryptionVersion": header.get("formatVersion") if header else 1,
+        "visibility": (
+            "public"
+            if not encrypted and manifest.get("visibility") == "public"
+            else "private"
+        ),
+        "encryptionVersion": (
+            header.get("formatVersion")
+            if header
+            else (0 if manifest.get("visibility") == "public" else 1)
+        ),
         "cipher": header.get("cipher") if header else "none",
         "keyStored": used_key_file is not None,
         "keyFile": str(used_key_file) if used_key_file else None,
@@ -138,6 +147,7 @@ def main() -> int:
         "workspace": manifest.get("workspace"),
         "sourceAgent": manifest.get("sourceAgent"),
         "treeHash": manifest.get("treeHash"),
+        "publication": manifest.get("publication"),
         "stacks": manifest.get("stacks", []),
         "includedFiles": len(manifest.get("files", [])),
         "excludedFiles": len(manifest.get("exclusions", [])),

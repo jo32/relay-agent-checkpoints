@@ -9,8 +9,10 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import tarfile
 import tempfile
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -29,6 +31,24 @@ from relay_credentials import RelayCredentialError, load_access_token
 
 MAX_MEMBERS = 100_000
 MAX_EXTRACTED_BYTES = 2 * 1024 * 1024 * 1024
+MAX_MEMBER_BYTES = 100 * 1024 * 1024
+PUBLIC_FORMAT_VERSION = 1
+CHECKSUM_PATTERN = re.compile(r"^(?:sha256:)?([0-9a-f]{64})$", re.IGNORECASE)
+CHECKPOINT_ID_PATTERN = re.compile(r"^cp_[A-Za-z0-9_-]{6,80}$")
+WINDOWS_RESERVED_NAMES = {
+    "con",
+    "prn",
+    "aux",
+    "nul",
+    *(f"com{index}" for index in range(1, 10)),
+    *(f"lpt{index}" for index in range(1, 10)),
+}
+PUBLIC_METADATA_FILES = {
+    ".agent-checkpoint/manifest.json",
+    ".agent-checkpoint/HANDOFF.md",
+    ".agent-checkpoint/README.md",
+    ".agent-checkpoint/inferred.gitignore",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -90,7 +110,11 @@ def main() -> int:
     api_token: str | None = None
     if needs_token:
         try:
-            api_token = load_access_token(args.api_url or "", args.api_token)
+            api_token = load_access_token(
+                args.api_url or "",
+                args.api_token,
+                required_scope="checkpoints:read",
+            )
         except RelayCredentialError as error:
             raise SystemExit(str(error)) from error
 
@@ -151,27 +175,61 @@ def main() -> int:
             except RelayCryptoError as error:
                 raise SystemExit(str(error)) from error
 
+        public_format = relay_metadata.get("publicFormatVersion")
+        if public_format is not None and public_format != PUBLIC_FORMAT_VERSION:
+            raise SystemExit(
+                "Relay returned an unsupported public checkpoint format"
+            )
+        is_public = public_format == PUBLIC_FORMAT_VERSION
+        publication = relay_metadata.get("publication")
+        relay_checkpoint_id = relay_metadata.get("checkpointId")
+        requested_checkpoint_id = (
+            checkpoint_input
+            if needs_token
+            and CHECKPOINT_ID_PATTERN.fullmatch(checkpoint_input)
+            else checkpoint_id_from_url(url)
+        )
+        if (
+            isinstance(relay_checkpoint_id, str)
+            and requested_checkpoint_id is not None
+            and relay_checkpoint_id != requested_checkpoint_id
+        ):
+            raise SystemExit(
+                "Relay checkpoint ID does not match the requested checkpoint"
+            )
+        expected_checkpoint_id = (
+            relay_checkpoint_id
+            if isinstance(relay_checkpoint_id, str)
+            else checkpoint_id
+            or requested_checkpoint_id
+        )
         result = restore_archive(
             archive_path,
             destination,
             merge=args.restore_mode == "merge",
+            expected_checkpoint_id=expected_checkpoint_id,
+            public_metadata=(
+                publication if is_public and isinstance(publication, dict) else None
+            ),
         )
         result.update(
             {
                 "downloadUrl": url,
                 "archiveSha256": archive_checksum,
                 "encrypted": encrypted,
-                "encryptionVersion": 2 if encrypted else 1,
+                "visibility": "public" if is_public else "private",
+                "encryptionVersion": 2 if encrypted else (0 if is_public else 1),
                 "cipher": "AES-256-GCM" if encrypted else "none",
                 "keyStored": used_key_file is not None,
                 "keyFile": str(used_key_file) if used_key_file else None,
                 "agent": relay_metadata.get("agent"),
+                "publication": publication,
             }
         )
         if args.keep_archive:
             keep = args.keep_archive.expanduser().resolve()
             keep.parent.mkdir(parents=True, exist_ok=True)
-            keep.write_bytes(downloaded_path.read_bytes())
+            shutil.copyfile(downloaded_path, keep)
             result["archive"] = str(keep)
 
     if args.json_output:
@@ -194,6 +252,8 @@ def main() -> int:
                 print(f"Recovery key: loaded from {result['keyFile']}")
             else:
                 print("Encryption key: entered interactively and not stored.")
+        elif result["visibility"] == "public":
+            print("Recovery key: not required for this public checkpoint.")
         print(f"Read the handoff: {result['handoff']}")
         if isinstance(result.get("agent"), dict):
             agent = result["agent"]
@@ -212,7 +272,7 @@ def checkpoint_url(
     if parsed.scheme in {"http", "https"} and parsed.netloc:
         clean_url = urllib.parse.urlunparse(parsed._replace(fragment=""))
         return clean_url, False
-    if not checkpoint.startswith("cp_"):
+    if not CHECKPOINT_ID_PATTERN.fullmatch(checkpoint):
         raise SystemExit("Checkpoint must be a Relay cp_ ID or an HTTPS share URL")
     if not api_url:
         raise SystemExit(
@@ -262,6 +322,17 @@ def download_archive(
             agent = decode_agent_metadata(response.headers)
             if agent:
                 metadata["agent"] = agent
+            public_format = response.headers.get("x-relay-public-format")
+            if public_format:
+                try:
+                    metadata["publicFormatVersion"] = int(public_format)
+                except ValueError as error:
+                    raise SystemExit(
+                        "Relay returned an invalid public checkpoint format"
+                    ) from error
+                metadata["publication"] = decode_publication_metadata(
+                    response.headers
+                )
             return metadata
     except urllib.error.HTTPError as error:
         detail = error.read().decode("utf-8", errors="replace")
@@ -290,13 +361,28 @@ def decode_agent_metadata(headers) -> dict[str, str] | None:
     return {"name": name, "description": description, "mode": mode}
 
 
+def decode_publication_metadata(headers) -> dict[str, str]:
+    encoded_title = headers.get("x-relay-public-title")
+    encoded_description = headers.get("x-relay-public-description")
+    if not encoded_title or not encoded_description:
+        raise SystemExit("Relay returned incomplete public checkpoint metadata")
+    title = urllib.parse.unquote(encoded_title)
+    description = urllib.parse.unquote(encoded_description)
+    if not title or len(title) > 120 or not description or len(description) > 1000:
+        raise SystemExit("Relay returned invalid public checkpoint metadata")
+    return {"title": title, "description": description}
+
+
 def restore_archive(
     archive_path: Path,
     destination: Path,
     *,
     merge: bool = False,
+    expected_checkpoint_id: str | None = None,
+    public_metadata: dict[str, object] | None = None,
 ) -> dict[str, object]:
     seen: set[str] = set()
+    windows_paths: dict[str, str] = {}
     try:
         archive = tarfile.open(archive_path, "r:gz")
     except (tarfile.TarError, OSError) as error:
@@ -309,6 +395,7 @@ def restore_archive(
         total_size = 0
         for member in members:
             name = validate_member_name(member.name)
+            record_windows_path(name, windows_paths)
             if name in seen:
                 raise SystemExit(f"Duplicate archive member: {name}")
             seen.add(name)
@@ -318,6 +405,8 @@ def restore_archive(
                 raise SystemExit(f"Unsafe archive member type: {name}")
             if member.size < 0:
                 raise SystemExit(f"Invalid archive member size: {name}")
+            if member.size > MAX_MEMBER_BYTES:
+                raise SystemExit(f"Archive member exceeds the size limit: {name}")
             total_size += member.size
             if total_size > MAX_EXTRACTED_BYTES:
                 raise SystemExit("Checkpoint exceeds the extracted-size limit")
@@ -339,6 +428,19 @@ def restore_archive(
             raise SystemExit("Checkpoint manifest is invalid") from error
         if not isinstance(manifest, dict):
             raise SystemExit("Checkpoint manifest must be an object")
+        if (
+            expected_checkpoint_id is not None
+            and manifest.get("checkpointId") != expected_checkpoint_id
+        ):
+            raise SystemExit(
+                "Checkpoint manifest ID does not match Relay metadata"
+            )
+        if public_metadata is not None:
+            validate_public_manifest(
+                manifest,
+                members,
+                public_metadata,
+            )
 
         expected_files = manifest.get("files")
         if not isinstance(expected_files, list):
@@ -369,7 +471,7 @@ def restore_archive(
             source = archive.extractfile(member)
             if source is None:
                 raise SystemExit(f"Manifest file is unreadable: {path}")
-            digest_actual = hashlib.sha256(source.read()).hexdigest()
+            digest_actual = sha256_stream(source)
             if f"sha256:{digest_actual}" != normalize_checksum(digest):
                 raise SystemExit(f"Hash mismatch: {path}")
 
@@ -426,6 +528,43 @@ def restore_archive(
         destination / ".agent-checkpoint" / "HANDOFF.md",
         restore_mode="new",
     )
+
+
+def validate_public_manifest(
+    manifest: dict[str, object],
+    members: list[tarfile.TarInfo],
+    public_metadata: dict[str, object],
+) -> None:
+    tree_hash = manifest.get("treeHash")
+    if (
+        manifest.get("formatVersion") != 2
+        or manifest.get("visibility") != "public"
+        or manifest.get("workspace") != "Public workspace"
+        or manifest.get("baseSnapshot") is not None
+        or manifest.get("exclusions") != []
+        or manifest.get("publication") != public_metadata
+        or not isinstance(tree_hash, str)
+        or CHECKSUM_PATTERN.fullmatch(tree_hash) is None
+    ):
+        raise SystemExit(
+            "Public checkpoint manifest does not match Relay publication metadata"
+        )
+    metadata_files: set[str] = set()
+    for member in members:
+        name = validate_member_name(member.name)
+        if name == ".agent-checkpoint" and member.isdir():
+            continue
+        if not name.startswith(".agent-checkpoint/"):
+            continue
+        if not member.isfile() or name not in PUBLIC_METADATA_FILES:
+            raise SystemExit(
+                "Public checkpoint contains missing or unexpected reserved metadata"
+            )
+        metadata_files.add(name)
+    if metadata_files != PUBLIC_METADATA_FILES:
+        raise SystemExit(
+            "Public checkpoint contains missing or unexpected reserved metadata"
+        )
 
 
 def merge_archive(
@@ -657,15 +796,54 @@ def validate_archive_tree(members: list[tarfile.TarInfo]) -> None:
 
 
 def validate_member_name(name: str) -> str:
-    if not name or "\0" in name:
+    if (
+        not name
+        or "\0" in name
+        or "\\" in name
+        or re.match(r"^[A-Za-z]:", name)
+        or any(character in '<>"|?*' for character in name)
+        or any(ord(character) < 32 or ord(character) == 127 for character in name)
+    ):
         raise SystemExit("Checkpoint contains an invalid member name")
     pure = PurePosixPath(name)
     if pure.is_absolute() or ".." in pure.parts:
         raise SystemExit(f"Archive member escapes the destination: {name}")
+    for part in pure.parts:
+        windows_base = part.split(".", 1)[0].casefold()
+        if (
+            ":" in part
+            or part.endswith((".", " "))
+            or windows_base in WINDOWS_RESERVED_NAMES
+        ):
+            raise SystemExit(
+                "Checkpoint contains a member name that is unsafe on Windows"
+            )
     normalized = pure.as_posix()
     if normalized in {"", "."}:
         raise SystemExit("Checkpoint contains an empty member name")
     return normalized
+
+
+def record_windows_path(name: str, paths: dict[str, str]) -> None:
+    parts = PurePosixPath(name).parts
+    for length in range(1, len(parts) + 1):
+        exact = "/".join(parts[:length])
+        folded = unicodedata.normalize("NFC", exact).casefold()
+        previous = paths.get(folded)
+        if previous is not None and previous != exact:
+            raise SystemExit(
+                "Checkpoint contains paths that collide on a case-insensitive filesystem"
+            )
+        paths[folded] = exact
+
+
+def checkpoint_id_from_url(url: str) -> str | None:
+    path = urllib.parse.unquote(urllib.parse.urlparse(url).path)
+    match = re.fullmatch(
+        r"/api/(?:public/)?checkpoints/(cp_[A-Za-z0-9_-]{6,80})/download",
+        path,
+    )
+    return match.group(1) if match else None
 
 
 def sha256_file(path: Path) -> str:
@@ -676,8 +854,19 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def sha256_stream(handle) -> str:
+    digest = hashlib.sha256()
+    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
 def normalize_checksum(value: str) -> str:
-    return value if value.startswith("sha256:") else f"sha256:{value}"
+    normalized = value.strip()
+    match = CHECKSUM_PATTERN.fullmatch(normalized)
+    if not match:
+        return normalized
+    return f"sha256:{match.group(1).lower()}"
 
 
 if __name__ == "__main__":

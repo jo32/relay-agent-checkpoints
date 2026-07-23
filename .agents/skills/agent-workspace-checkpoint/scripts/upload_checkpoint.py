@@ -43,7 +43,11 @@ def main() -> int:
     try:
         header = read_encrypted_header(archive)
         checkpoint_id = str(header["checkpointId"])
-        token = load_access_token(args.api_url, args.api_token)
+        token = load_access_token(
+            args.api_url,
+            args.api_token,
+            required_scope="checkpoints:write",
+        )
         stored_metadata = load_agent_metadata(archive, checkpoint_id)
         agent_metadata = resolve_agent_metadata(
             checkpoint_id=checkpoint_id,

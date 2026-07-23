@@ -28,7 +28,11 @@ def main() -> int:
     if not args.api_url:
         raise SystemExit("Sharing requires RELAY_API_URL (or --api-url).")
     try:
-        api_token = load_access_token(args.api_url, args.api_token)
+        api_token = load_access_token(
+            args.api_url,
+            args.api_token,
+            required_scope="checkpoints:share",
+        )
     except RelayCredentialError as error:
         raise SystemExit(str(error)) from error
     endpoint = (

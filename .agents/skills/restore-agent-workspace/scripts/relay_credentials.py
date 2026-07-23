@@ -40,7 +40,11 @@ def credentials_path() -> Path:
     return base / "relay" / "credentials.json"
 
 
-def load_access_token(api_url: str, explicit_token: str | None = None) -> str:
+def load_access_token(
+    api_url: str,
+    explicit_token: str | None = None,
+    required_scope: str | None = None,
+) -> str:
     token = explicit_token or os.environ.get("RELAY_API_TOKEN")
     if token:
         return _validate_token(token)
@@ -56,6 +60,16 @@ def load_access_token(api_url: str, explicit_token: str | None = None) -> str:
     if isinstance(expires_at, str) and _is_expired(expires_at):
         raise RelayCredentialError(
             "Relay access has expired. Run relay_auth.py login again."
+        )
+    scopes = str(entry.get("scopes", "")).split()
+    if required_scope and required_scope not in scopes:
+        command = (
+            "relay_auth.py login --publish"
+            if required_scope == "checkpoints:publish"
+            else "relay_auth.py login"
+        )
+        raise RelayCredentialError(
+            f"Relay access lacks {required_scope}. Run {command} for this Relay URL."
         )
     return _validate_token(str(entry.get("accessToken", "")))
 
