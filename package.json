@@ -7,10 +7,10 @@
   },
   "scripts": {
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
-    "prebuild": "python3 scripts/build_skill_bundle.py",
+    "skills:build": "python3 scripts/build_skill_bundle.py",
     "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
-    "test": "npm run build && node --test tests/rendered-html.test.mjs && python3 -m unittest tests/test_checkpoint_skill.py tests/test_skill_bundle.py",
+    "test": "npm run skills:build && npm run build && node --test tests/rendered-html.test.mjs && python3 -m unittest tests/test_checkpoint_skill.py tests/test_skill_bundle.py",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },
