@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentPrincipal } from "../../lib/principal";
@@ -23,14 +24,20 @@ export default async function SignInPage({
   return (
     <main className="auth-page">
       <section className="auth-card" aria-labelledby="sign-in-title">
-        <Link className="auth-brand" href="/" aria-label="Relay home">
-          <span className="relay-mark" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-          </span>
-          <strong>Relay</strong>
-        </Link>
+        <div className="auth-card-top">
+          <Link className="auth-brand" href="/" aria-label="Relay home">
+            <span className="relay-mark" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </span>
+            <strong>Relay</strong>
+          </Link>
+          <Link className="auth-home-link" href="/">
+            <ArrowLeft size={14} aria-hidden="true" />
+            Back to home
+          </Link>
+        </div>
 
         <div className="auth-heading">
           <span className="eyebrow">Your private backup vault</span>

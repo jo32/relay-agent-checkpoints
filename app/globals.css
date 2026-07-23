@@ -2251,8 +2251,31 @@ kbd {
   backdrop-filter: blur(12px);
 }
 
-.auth-brand {
+.auth-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
   margin-bottom: 46px;
+}
+
+.auth-card-top .auth-brand {
+  margin-bottom: 0;
+}
+
+.auth-home-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: color 140ms ease;
+}
+
+.auth-home-link:hover {
+  color: var(--foreground);
 }
 
 .auth-heading .eyebrow {
@@ -3263,7 +3286,7 @@ kbd {
     padding: 28px 22px;
   }
 
-  .auth-brand {
+  .auth-card-top {
     margin-bottom: 38px;
   }
 
