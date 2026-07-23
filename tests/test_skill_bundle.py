@@ -57,7 +57,10 @@ class SkillBundleTests(unittest.TestCase):
         self.assertIn("Never ask the user to run an authentication command", create_skill)
         self.assertIn("relay_auth.py login", create_skill)
         self.assertIn("relay_auth.py login --api-url \"$RELAY_API_URL\" --publish", create_skill)
+        self.assertIn("relay_auth.py login --api-url \"$RELAY_API_URL\" --delete", create_skill)
         self.assertIn("checkpoints:publish", create_skill)
+        self.assertIn("checkpoints:delete", create_skill)
+        self.assertIn("delete_checkpoint.py", create_skill)
         self.assertIn("Connect to Relay as described above", create_skill)
         self.assertIn("/api/agent/status", create_skill)
         self.assertIn("uploads in chunks", create_skill)
@@ -79,6 +82,7 @@ class SkillBundleTests(unittest.TestCase):
         self.assertTrue((SKILL_ROOTS[0] / "scripts" / "agent_metadata.py").is_file())
         self.assertTrue((SKILL_ROOTS[0] / "scripts" / "relay_upload.py").is_file())
         self.assertTrue((SKILL_ROOTS[0] / "scripts" / "upload_checkpoint.py").is_file())
+        self.assertTrue((SKILL_ROOTS[0] / "scripts" / "delete_checkpoint.py").is_file())
 
 
 if __name__ == "__main__":

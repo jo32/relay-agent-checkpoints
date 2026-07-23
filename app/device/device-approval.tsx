@@ -16,6 +16,7 @@ export default function DeviceApproval({
   const [result, setResult] = useState<"approved" | "denied" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const canPublish = scopes.includes("checkpoints:publish");
+  const canDelete = scopes.includes("checkpoints:delete");
 
   async function decide(decision: "approve" | "deny") {
     setPending(decision);
@@ -71,6 +72,12 @@ export default function DeviceApproval({
             {" "}It also permits creating permanent public checkpoints and making
             your own private checkpoints publicly readable. Public disclosure is
             effectively irreversible.
+          </>
+        )}
+        {canDelete && (
+          <>
+            {" "}It also permits permanently deleting your Relay-hosted checkpoint
+            records, stored archives, public artifacts, and marketplace listings.
           </>
         )}
       </p>

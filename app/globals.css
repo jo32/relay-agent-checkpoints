@@ -1560,6 +1560,27 @@ kbd {
   box-shadow: none;
 }
 
+.button.danger {
+  color: #fff;
+  background: #b42318;
+  border-color: #b42318;
+}
+
+.button.danger:hover {
+  background: #912018;
+  border-color: #912018;
+}
+
+.danger-control {
+  color: #b42318;
+}
+
+.danger-control:hover {
+  color: #912018;
+  background: #fff1ef;
+  border-color: #f4b4ad;
+}
+
 .stat-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -2545,6 +2566,10 @@ kbd {
   border-radius: 7px;
 }
 
+.modal-symbol.danger {
+  background: #b42318;
+}
+
 .modal-content {
   min-height: 0;
   overflow: auto;
@@ -2686,6 +2711,72 @@ kbd {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.delete-modal {
+  width: min(560px, 100%);
+}
+
+.delete-modal form {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.delete-modal-content > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.delete-warning {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 13px;
+  color: #7a271a;
+  background: #fff4ed;
+  border: 1px solid #f7c7a9;
+  border-radius: 8px;
+}
+
+.delete-warning p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.delete-confirmation {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.delete-confirmation input {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 11px;
+  font-family: var(--font-geist-mono), "Geist Mono", ui-monospace, monospace;
+  font-size: 11px;
+  background: #fff;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  outline: none;
+}
+
+.delete-confirmation input:focus {
+  border-color: #b42318;
+  box-shadow: 0 0 0 3px rgba(180, 35, 24, 0.12);
+}
+
+.delete-modal-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .toast {

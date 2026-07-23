@@ -1,6 +1,6 @@
 ---
 name: agent-workspace-checkpoint
-description: Connect a local agent to Relay, create private encrypted or intentionally public keyless workspace checkpoints, and publish a private checkpoint locally without sending its recovery key. Use for safe project handoffs, immutable snapshots, public agent workspaces, and private-to-public publication.
+description: Connect a local agent to Relay; create, publish, and delete private encrypted or intentionally public keyless workspace checkpoints without sending recovery keys. Use for safe project handoffs, immutable-until-deleted snapshots, public agent workspaces, private-to-public publication, and owner-requested removal.
 ---
 
 # Agent Workspace Checkpoint
@@ -36,6 +36,14 @@ python3 scripts/relay_auth.py login --api-url "$RELAY_API_URL" --publish
 ```
 
 The approval page must explicitly warn that this extra permission can make the user's own checkpoint permanently public. Never request it for a private-only operation.
+
+The default credential also cannot delete. Before deleting a checkpoint, verify that status includes `checkpoints:delete`. If it does not, run the one-time flow with `--delete`:
+
+```bash
+python3 scripts/relay_auth.py login --api-url "$RELAY_API_URL" --delete
+```
+
+The approval page must explicitly warn that this permission can permanently remove the user's Relay-hosted checkpoint records and stored artifacts. Request it only for a deletion the user asked for. `--publish` and `--delete` may be combined only when both permissions are needed for the current user request.
 
 Never request a Relay access credential or encryption key in chat. Never place either secret in the archive, project files, logs, URLs, or handoff text. `RELAY_API_TOKEN` and `--api-token` remain supported only for explicit backward-compatible automation.
 
@@ -161,6 +169,41 @@ The command authenticates the private download, verifies its checksum and encryp
 
 The separate public artifact is indexed in the same anonymous marketplace only
 after the durable publication succeeds.
+
+## Delete an owned checkpoint
+
+Deletion is destructive and applies only to checkpoints owned by the authenticated Relay tenant. Before deleting, identify the exact `cp_` ID and ask one concise question that states:
+
+- whether the checkpoint is private or public;
+- that Relay will remove the stored checkpoint, active private share link, registry record, and any public artifact and marketplace listing;
+- for a public checkpoint, that its Relay URL will stop working but previously downloaded, cached, mirrored, or otherwise copied content cannot be retracted;
+- whether the protected locally saved generated recovery key should also be deleted.
+
+Never infer deletion from a request to clean, hide, unlist, disconnect, log out, or remove a local file. The user must explicitly request deletion of the identified checkpoint. Do not treat deleting a public checkpoint as reversing its prior disclosure.
+
+After confirming that the credential has `checkpoints:delete`, run:
+
+```bash
+python3 scripts/delete_checkpoint.py \
+  --checkpoint cp_123 \
+  --api-url "$RELAY_API_URL" \
+  --json
+```
+
+The command retrieves the owner-visible metadata first and requires the user to type the exact checkpoint ID. It sends the exact ID again as the authenticated API confirmation. Use `--yes` only when the user has already explicitly confirmed that exact ID after seeing its visibility and the warnings above.
+
+Add `--delete-local-key` only if the user explicitly chose to remove Relay's locally saved generated recovery key too:
+
+```bash
+python3 scripts/delete_checkpoint.py \
+  --checkpoint cp_123 \
+  --api-url "$RELAY_API_URL" \
+  --delete-local-key \
+  --yes \
+  --json
+```
+
+Deleting the local key can make any remaining private local archive permanently unrecoverable. The command never deletes local checkpoint archives or their sidecars. Report whether the remote deletion succeeded, whether a local key was requested and removed, that local archives remain, and the public-copy warning when applicable. Never read or reveal the key while deleting it.
 
 ## File-selection policy
 

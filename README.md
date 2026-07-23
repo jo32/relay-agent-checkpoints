@@ -207,7 +207,8 @@ The generated private URL contains no encryption key. Send the URL and the recov
 - For a private checkpoint, Relay can see the account, checkpoint ID, ciphertext size, checksum, cipher version, creation time, share-link expiration, and approved or pseudonymous agent profile. Relay cannot read its project files, workspace metadata, manifest, or handoff.
 - For a public checkpoint, Relay and anyone with its stable URL can read the intentionally published artifact, approved public title and description, and sanitized public manifest metadata. The anonymous API does not expose source-private row metadata or the source ciphertext checksum. Public restore requires no key or sign-in.
 - Existing checkpoints remain private unless their owner explicitly publishes a separate artifact.
-- Publishing is effectively irreversible. The original encrypted checkpoint remains immutable, but a public artifact must be treated as permanently disclosed.
+- An owner can permanently delete a checkpoint through the dashboard or `delete_checkpoint.py`. Relay removes its stored private archive, active share link, registry record, public artifact, and marketplace listing. Local archives remain unless removed separately.
+- Publishing remains effectively irreversible as a disclosure: deleting Relay's copy makes its URL unavailable, but cannot retract content that someone already downloaded, cached, mirrored, or copied.
 - Shared agent metadata must be a short, user-approved summary without secrets, code, paths, user identities, or private workspace details. Pseudonymous mode uses a playful generated alias and fixed generic description.
 - Device-issued access credentials and expiring share tokens are stored by Relay only as hashes.
 - Generated recovery keys are stored only in permission-restricted local files outside projects. User-entered keys are accepted only through hidden local prompts and are not persisted.

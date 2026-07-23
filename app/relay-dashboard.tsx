@@ -26,6 +26,7 @@ import {
   ShieldCheck,
   SquareTerminal,
   Store,
+  Trash2,
   UploadCloud,
   Users,
   X,
@@ -175,6 +176,7 @@ export default function RelayDashboard({
   const [toast, setToast] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [workspaceFilter, setWorkspaceFilter] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Checkpoint | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -329,6 +331,7 @@ export default function RelayDashboard({
               onCopyPublicUrl={(checkpoint) =>
                 void copyPublicUrl(checkpoint, setToast)
               }
+              onDelete={setDeleteTarget}
             />
           )}
 
@@ -354,6 +357,24 @@ export default function RelayDashboard({
 
       {integrationOpen && (
         <SkillIntegrationModal onClose={() => setIntegrationOpen(false)} />
+      )}
+
+      {deleteTarget && (
+        <DeleteCheckpointModal
+          checkpoint={deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={() => {
+            setCheckpoints((current) =>
+              current.filter((checkpoint) => checkpoint.id !== deleteTarget.id),
+            );
+            setDeleteTarget(null);
+            setToast(
+              deleteTarget.visibility === "public"
+                ? "Public checkpoint and marketplace listing deleted."
+                : "Private checkpoint deleted.",
+            );
+          }}
+        />
       )}
 
       {toast && (
@@ -575,6 +596,7 @@ function CheckpointsView({
   onRestore,
   onMakePublic,
   onCopyPublicUrl,
+  onDelete,
 }: {
   checkpoints: Checkpoint[];
   allCheckpoints: Checkpoint[];
@@ -586,6 +608,7 @@ function CheckpointsView({
   onRestore: (checkpoint: Checkpoint) => void;
   onMakePublic: (checkpoint: Checkpoint) => void;
   onCopyPublicUrl: (checkpoint: Checkpoint) => void;
+  onDelete: (checkpoint: Checkpoint) => void;
 }) {
   const workspaceCount = new Set(allCheckpoints.map((item) => item.workspaceName)).size;
   const totalBytes = allCheckpoints.reduce((sum, item) => sum + item.sizeBytes, 0);
@@ -712,6 +735,15 @@ function CheckpointsView({
                     </button>
                   </>
                 )}
+                <button
+                  className="icon-control danger-control"
+                  type="button"
+                  aria-label={`Delete ${checkpointTitle(latest)}`}
+                  title="Delete checkpoint"
+                  onClick={() => onDelete(latest)}
+                >
+                  <Trash2 size={15} />
+                </button>
               </div>
             </div>
           </div>
@@ -751,6 +783,7 @@ function CheckpointsView({
                 onRestore={onRestore}
                 onMakePublic={onMakePublic}
                 onCopyPublicUrl={onCopyPublicUrl}
+                onDelete={onDelete}
               />
             ))
           ) : (
@@ -808,12 +841,14 @@ function CheckpointRow({
   onRestore,
   onMakePublic,
   onCopyPublicUrl,
+  onDelete,
 }: {
   checkpoint: Checkpoint;
   onShare: (checkpoint: Checkpoint) => void;
   onRestore: (checkpoint: Checkpoint) => void;
   onMakePublic: (checkpoint: Checkpoint) => void;
   onCopyPublicUrl: (checkpoint: Checkpoint) => void;
+  onDelete: (checkpoint: Checkpoint) => void;
 }) {
   return (
     <article className="data-row">
@@ -870,6 +905,15 @@ function CheckpointRow({
         )}
         <button className="button row-button" type="button" onClick={() => onRestore(checkpoint)}>
           {checkpoint.visibility === "public" ? "Keyless restore" : "Restore"}
+        </button>
+        <button
+          className="icon-control danger-control"
+          type="button"
+          aria-label={`Delete ${checkpointTitle(checkpoint)}`}
+          title="Delete checkpoint"
+          onClick={() => onDelete(checkpoint)}
+        >
+          <Trash2 size={14} />
         </button>
       </div>
     </article>
@@ -1285,6 +1329,162 @@ If the Relay credential is missing or expired, let the skill open the approval p
           <span><ShieldCheck size={14} /> Agent-operated · Browser-approved · Visibility-explicit</span>
           <button className="button primary" type="button" onClick={onClose}>Done</button>
         </footer>
+      </section>
+    </div>
+  );
+}
+
+function DeleteCheckpointModal({
+  checkpoint,
+  onClose,
+  onDeleted,
+}: {
+  checkpoint: Checkpoint;
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
+  const [confirmation, setConfirmation] = useState("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const isPublic = checkpoint.visibility === "public";
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    inputRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !pending) onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [onClose, pending]);
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (confirmation !== checkpoint.id || pending) return;
+    setPending(true);
+    setError(null);
+    if (checkpoint.demo) {
+      onDeleted();
+      return;
+    }
+    try {
+      const response = await fetch(
+        `/api/checkpoints/${encodeURIComponent(checkpoint.id)}`,
+        {
+          method: "DELETE",
+          headers: {
+            accept: "application/json",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ confirmation }),
+        },
+      );
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error || "Relay could not delete this checkpoint.");
+      }
+      onDeleted();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Relay could not delete this checkpoint.",
+      );
+      setPending(false);
+    }
+  }
+
+  return (
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onMouseDown={() => {
+        if (!pending) onClose();
+      }}
+    >
+      <section
+        className="integration-modal delete-modal"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="delete-checkpoint-title"
+        aria-describedby="delete-checkpoint-description"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="modal-header">
+          <div>
+            <span className="modal-symbol danger"><Trash2 size={18} /></span>
+            <div>
+              <p className="eyebrow">Permanent action</p>
+              <h2 id="delete-checkpoint-title">Delete checkpoint?</h2>
+            </div>
+          </div>
+          <button
+            ref={closeRef}
+            className="icon-control"
+            type="button"
+            disabled={pending}
+            onClick={onClose}
+            aria-label="Close"
+          >
+            <X size={16} />
+          </button>
+        </header>
+        <form onSubmit={(event) => void submit(event)}>
+          <div className="modal-content delete-modal-content">
+            <p id="delete-checkpoint-description">
+              Relay will permanently remove <strong>{checkpointTitle(checkpoint)}</strong>,
+              its stored archive, active share link, and registry record.
+            </p>
+            {isPublic && (
+              <div className="delete-warning" role="note">
+                <Globe2 size={17} />
+                <p>
+                  Its public URL and marketplace listing will stop working. Copies
+                  that other people already downloaded or cached cannot be retracted.
+                </p>
+              </div>
+            )}
+            <label className="delete-confirmation">
+              <span>Type <strong className="mono">{checkpoint.id}</strong> to confirm</span>
+              <input
+                ref={inputRef}
+                value={confirmation}
+                onChange={(event) => setConfirmation(event.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+                aria-invalid={Boolean(error)}
+              />
+            </label>
+            {error && <p className="form-error" role="alert">{error}</p>}
+          </div>
+          <footer className="modal-footer">
+            <span>This cannot be undone.</span>
+            <div className="delete-modal-actions">
+              <button
+                className="button secondary"
+                type="button"
+                disabled={pending}
+                onClick={onClose}
+              >
+                Cancel
+              </button>
+              <button
+                className="button danger"
+                type="submit"
+                disabled={confirmation !== checkpoint.id || pending}
+              >
+                <Trash2 size={14} />
+                {pending ? "Deleting…" : "Delete permanently"}
+              </button>
+            </div>
+          </footer>
+        </form>
       </section>
     </div>
   );

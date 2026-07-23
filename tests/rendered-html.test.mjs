@@ -365,6 +365,9 @@ test("agent-operated skill prompts are copy-ready", async () => {
   assert.match(source, /Make public/);
   assert.match(source, /Copy public URL/);
   assert.match(source, /Keyless restore/);
+  assert.match(source, /Delete checkpoint/);
+  assert.match(source, /Type <strong className="mono">\{checkpoint\.id\}<\/strong> to confirm/);
+  assert.match(source, /downloaded or cached cannot be retracted/);
   assert.match(source, /\/api\/public\/checkpoints\/\$\{encodeURIComponent\(checkpoint\.id\)\}\/download/);
   assert.doesNotMatch(source, /Download bundle|Device sign-in|Creation skill|Restore skill/);
   assert.doesNotMatch(source, /href=\{`\/api\/checkpoints\/\$\{checkpoint\.id\}\/download`\}/);
@@ -398,6 +401,7 @@ test("device authorization issues and revokes a scoped agent credential", async 
   const privateAuthorization = await privateAuthorizationResponse.json();
   assert.match(privateAuthorization.scope, /checkpoints:write/);
   assert.doesNotMatch(privateAuthorization.scope, /checkpoints:publish/);
+  assert.doesNotMatch(privateAuthorization.scope, /checkpoints:delete/);
 
   const invalidScopeResponse = await fetch(`${origin}/api/device/authorize`, {
     method: "POST",
@@ -418,13 +422,14 @@ test("device authorization issues and revokes a scoped agent credential", async 
     body: JSON.stringify({
       client_name: "Rendered HTML test agent",
       scope:
-        "checkpoints:read checkpoints:write checkpoints:share checkpoints:publish",
+        "checkpoints:read checkpoints:write checkpoints:share checkpoints:publish checkpoints:delete",
     }),
   });
   assert.equal(authorizationResponse.status, 201);
   const authorization = await authorizationResponse.json();
   assert.match(authorization.device_code, /^rdc_[a-f0-9]{64}$/);
   assert.match(authorization.scope, /checkpoints:publish/);
+  assert.match(authorization.scope, /checkpoints:delete/);
   assert.match(authorization.user_code, /^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
   assert.equal(
     authorization.verification_uri_complete,
@@ -446,6 +451,7 @@ test("device authorization issues and revokes a scoped agent credential", async 
   assert.match(approvalHtml, /Rendered HTML test agent/);
   assert.match(approvalHtml, new RegExp(authorization.user_code));
   assert.match(approvalHtml, /effectively irreversible/);
+  assert.match(approvalHtml, /permanently deleting your Relay-hosted checkpoint/);
 
   const approvalResponse = await fetch(`${origin}/api/device/approve`, {
     method: "POST",
@@ -472,6 +478,7 @@ test("device authorization issues and revokes a scoped agent credential", async 
   assert.equal(token.token_type, "Bearer");
   assert.match(token.scope, /checkpoints:write/);
   assert.match(token.scope, /checkpoints:publish/);
+  assert.match(token.scope, /checkpoints:delete/);
 
   const statusResponse = await fetch(`${origin}/api/agent/status`, {
     headers: { authorization: `Bearer ${token.access_token}` },
@@ -481,6 +488,7 @@ test("device authorization issues and revokes a scoped agent credential", async 
   assert.equal(status.connected, true);
   assert.match(status.scopes.join(" "), /checkpoints:write/);
   assert.match(status.scopes.join(" "), /checkpoints:publish/);
+  assert.match(status.scopes.join(" "), /checkpoints:delete/);
 
   const checkpointId = `cp_rendered_${Date.now()}`;
   const encryptedHeader = Buffer.from(JSON.stringify({
@@ -1043,6 +1051,89 @@ test("device authorization issues and revokes a scoped agent credential", async 
     },
   );
   assert.equal(abandonedCrashCompletion.status, 404);
+
+  const mismatchedDelete = await fetch(
+    `${origin}/api/checkpoints/${directPublicId}`,
+    {
+      method: "DELETE",
+      headers: {
+        authorization: `Bearer ${token.access_token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ confirmation: checkpointId }),
+    },
+  );
+  assert.equal(mismatchedDelete.status, 400);
+  const publicStillAvailable = await fetch(
+    `${origin}/api/public/checkpoints/${directPublicId}/download`,
+  );
+  assert.equal(publicStillAvailable.status, 200);
+
+  const missingOriginBrowserDelete = await fetch(
+    `${origin}/api/checkpoints/${durableCrashId}`,
+    {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ confirmation: durableCrashId }),
+    },
+  );
+  assert.equal(missingOriginBrowserDelete.status, 403);
+  const browserDelete = await fetch(
+    `${origin}/api/checkpoints/${durableCrashId}`,
+    {
+      method: "DELETE",
+      headers: {
+        "content-type": "application/json",
+        origin,
+      },
+      body: JSON.stringify({ confirmation: durableCrashId }),
+    },
+  );
+  assert.equal(browserDelete.status, 200);
+  assert.equal((await browserDelete.json()).visibility, "private");
+  const browserDeletedDownload = await fetch(
+    `${origin}/api/checkpoints/${durableCrashId}/download`,
+    { headers: { authorization: `Bearer ${token.access_token}` } },
+  );
+  assert.equal(browserDeletedDownload.status, 404);
+
+  const deleteResponse = await fetch(
+    `${origin}/api/checkpoints/${directPublicId}`,
+    {
+      method: "DELETE",
+      headers: {
+        authorization: `Bearer ${token.access_token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ confirmation: directPublicId }),
+    },
+  );
+  assert.equal(deleteResponse.status, 200);
+  const deletion = await deleteResponse.json();
+  assert.equal(deletion.deleted, true);
+  assert.equal(deletion.checkpointId, directPublicId);
+  assert.equal(deletion.visibility, "public");
+  assert.match(deletion.publicCopiesWarning, /cannot be retracted/);
+
+  const deletedOwnerMetadata = await fetch(
+    `${origin}/api/checkpoints/${directPublicId}`,
+    { headers: { authorization: `Bearer ${token.access_token}` } },
+  );
+  assert.equal(deletedOwnerMetadata.status, 404);
+  const deletedPublicDownload = await fetch(
+    `${origin}/api/public/checkpoints/${directPublicId}/download`,
+  );
+  assert.equal(deletedPublicDownload.status, 404);
+  const marketplaceAfterDeleteResponse = await fetch(
+    `${origin}/api/public/checkpoints?q=${encodeURIComponent(directPublicId)}`,
+  );
+  assert.equal(marketplaceAfterDeleteResponse.status, 200);
+  const marketplaceAfterDelete = await marketplaceAfterDeleteResponse.json();
+  assert.ok(
+    marketplaceAfterDelete.checkpoints.every(
+      (item) => item.id !== directPublicId,
+    ),
+  );
 
   const revokeResponse = await fetch(`${origin}/api/device/revoke`, {
     method: "POST",

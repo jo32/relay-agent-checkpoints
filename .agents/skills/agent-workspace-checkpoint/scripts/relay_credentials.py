@@ -66,6 +66,8 @@ def load_access_token(
         command = (
             "relay_auth.py login --publish"
             if required_scope == "checkpoints:publish"
+            else "relay_auth.py login --delete"
+            if required_scope == "checkpoints:delete"
             else "relay_auth.py login"
         )
         raise RelayCredentialError(

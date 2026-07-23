@@ -36,6 +36,11 @@ def parse_args() -> argparse.Namespace:
                 action="store_true",
                 help="Request the irreversible public-checkpoint permission",
             )
+            command.add_argument(
+                "--delete",
+                action="store_true",
+                help="Request permission to permanently delete owned checkpoints",
+            )
     return parser.parse_args()
 
 
@@ -51,6 +56,7 @@ def main() -> int:
                 args.no_browser,
                 args.json_output,
                 args.publish,
+                args.delete,
             )
         if args.command == "status":
             return show_status(api_url, args.json_output)
@@ -64,12 +70,14 @@ def login(
     no_browser: bool,
     json_output: bool,
     publish: bool,
+    delete: bool,
 ) -> int:
     requested_scopes = [
         "checkpoints:read",
         "checkpoints:write",
         "checkpoints:share",
         *(["checkpoints:publish"] if publish else []),
+        *(["checkpoints:delete"] if delete else []),
     ]
     status, authorization = request_json(
         f"{api_url}/api/device/authorize",

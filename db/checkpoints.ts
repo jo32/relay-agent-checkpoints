@@ -120,6 +120,7 @@ export const CHECKPOINT_SCOPES = [
   "checkpoints:write",
   "checkpoints:share",
   "checkpoints:publish",
+  "checkpoints:delete",
 ] as const;
 export type CheckpointScope = (typeof CHECKPOINT_SCOPES)[number];
 export const DEFAULT_TOKEN_SCOPES = [
@@ -345,6 +346,47 @@ export async function findCheckpoint(id: string, tenantId: string) {
     .bind(id, tenantId)
     .first<RawCheckpointRecord>();
   return row ? toCheckpointRecord(row) : null;
+}
+
+export async function deleteCheckpoint(id: string, tenantId: string) {
+  const { DB, CHECKPOINTS } = getRuntimeEnv();
+  await ensureCheckpointSchema(DB);
+  const checkpoint = await findCheckpoint(id, tenantId);
+  if (!checkpoint) return null;
+  const publication = await findCheckpointPublication(id, tenantId);
+
+  const objectKeys = [
+    ...new Set(
+      [checkpoint.objectKey, publication?.objectKey].filter(
+        (key): key is string => Boolean(key),
+      ),
+    ),
+  ];
+
+  // Remove the bytes first. If the metadata batch fails, a retry remains safe
+  // and the public or private download is already unavailable.
+  await CHECKPOINTS.delete(objectKeys);
+  const [, , deleted] = await DB.batch([
+    DB.prepare(
+      `DELETE FROM checkpoint_marketplace_index
+      WHERE checkpoint_id = ?`,
+    ).bind(id),
+    DB.prepare(
+      `DELETE FROM checkpoint_publications
+      WHERE checkpoint_id = ? AND tenant_id = ?`,
+    ).bind(id, tenantId),
+    DB.prepare(
+      `DELETE FROM checkpoints
+      WHERE id = ? AND COALESCE(tenant_id, owner_key) = ?`,
+    ).bind(id, tenantId),
+  ]);
+
+  if (deleted.meta.changes === 0) return null;
+  return {
+    checkpointId: checkpoint.id,
+    visibility: checkpoint.visibility,
+    deletedObjects: objectKeys.length,
+  };
 }
 
 export async function findPublicCheckpoint(id: string) {

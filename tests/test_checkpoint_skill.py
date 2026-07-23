@@ -25,6 +25,7 @@ SHARE = SCRIPTS / "create_share.py"
 AUTH = SCRIPTS / "relay_auth.py"
 UPLOAD = SCRIPTS / "upload_checkpoint.py"
 PUBLISH = SCRIPTS / "publish_checkpoint.py"
+DELETE = SCRIPTS / "delete_checkpoint.py"
 RESTORE = (
     ROOT
     / ".agents"
@@ -1789,6 +1790,72 @@ fs.writeFileSync(output, Buffer.concat([
             self.assertEqual(requests[0]["body"], b"")
             self.assertNotIn(CHECKPOINT_KEY, str(requests[0]))
 
+    def test_delete_checkpoint_requires_exact_id_and_can_remove_saved_key(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            token = "rly_" + "e" * 64
+            checkpoint_id = "cp_delete_example"
+            keys = base / "keys"
+            keys.mkdir()
+            key_path = keys / f"{checkpoint_id}.key"
+            key_path.write_text("locally saved secret key\n", encoding="utf-8")
+            environment = {"RELAY_KEYS_DIR": str(keys)}
+
+            with deletion_server(
+                token,
+                checkpoint_id,
+                visibility="public",
+            ) as (api_url, requests):
+                cancelled = self.run_script(
+                    DELETE,
+                    "--checkpoint",
+                    checkpoint_id,
+                    "--api-url",
+                    api_url,
+                    "--api-token",
+                    token,
+                    check=False,
+                    input_text="wrong-checkpoint\n",
+                    env=environment,
+                )
+                self.assertNotEqual(cancelled.returncode, 0)
+                self.assertIn("cancelled", cancelled.stderr)
+                self.assertEqual([request["method"] for request in requests], ["GET"])
+
+                deleted = self.run_script(
+                    DELETE,
+                    "--checkpoint",
+                    checkpoint_id,
+                    "--api-url",
+                    api_url,
+                    "--api-token",
+                    token,
+                    "--delete-local-key",
+                    "--json",
+                    input_text=f"{checkpoint_id}\n",
+                    env=environment,
+                )
+
+            payload = json.loads(deleted.stdout)
+            self.assertTrue(payload["deleted"])
+            self.assertEqual(payload["visibility"], "public")
+            self.assertTrue(payload["localKey"]["removed"])
+            self.assertFalse(payload["localArchivesRemoved"])
+            self.assertFalse(key_path.exists())
+            self.assertEqual(
+                [request["method"] for request in requests],
+                ["GET", "GET", "DELETE"],
+            )
+            delete_request = requests[-1]
+            self.assertEqual(
+                json.loads(delete_request["body"]),
+                {"confirmation": checkpoint_id},
+            )
+            self.assertEqual(
+                delete_request["authorization"],
+                f"Bearer {token}",
+            )
+
     def test_device_login_stores_credential_and_upload_uses_it(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
@@ -2263,6 +2330,92 @@ def share_server(expected_token: str):
                 == f"Bearer {expected_token}"
                 else 401
             )
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response)))
+            self.end_headers()
+            self.wfile.write(response)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}", requests
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+
+@contextmanager
+def deletion_server(
+    expected_token: str,
+    checkpoint_id: str,
+    *,
+    visibility: str,
+):
+    requests: list[dict[str, object]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self._record("GET", b"")
+            if not self._authorized():
+                self._json(401, {"error": "unauthorized"})
+                return
+            self._json(
+                200,
+                {
+                    "checkpoint": {
+                        "id": checkpoint_id,
+                        "visibility": visibility,
+                        "label": "Deletion test checkpoint",
+                    }
+                },
+            )
+
+        def do_DELETE(self):
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length)
+            self._record("DELETE", body)
+            if not self._authorized():
+                self._json(401, {"error": "unauthorized"})
+                return
+            if json.loads(body) != {"confirmation": checkpoint_id}:
+                self._json(400, {"error": "confirmation"})
+                return
+            self._json(
+                200,
+                {
+                    "deleted": True,
+                    "checkpointId": checkpoint_id,
+                    "visibility": visibility,
+                    "deletedObjects": 1,
+                    "publicCopiesWarning": (
+                        "Previously downloaded or cached copies cannot be retracted."
+                        if visibility == "public"
+                        else None
+                    ),
+                },
+            )
+
+        def _authorized(self):
+            return self.headers.get("Authorization") == f"Bearer {expected_token}"
+
+        def _record(self, method: str, body: bytes):
+            requests.append(
+                {
+                    "method": method,
+                    "path": self.path,
+                    "authorization": self.headers.get("Authorization"),
+                    "body": body,
+                }
+            )
+
+        def _json(self, status: int, payload: dict[str, object]):
+            response = json.dumps(payload).encode("utf-8")
+            self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(response)))
             self.end_headers()
