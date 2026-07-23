@@ -2721,19 +2721,12 @@ kbd {
     grid-template-columns: 1fr minmax(260px, 360px) auto;
   }
 
-  .header-account > span:first-child {
+  .header-registry-label {
     display: none;
   }
 
   .latest-grid {
-    grid-template-columns: minmax(0, 1fr) 220px;
-  }
-
-  .latest-actions {
-    grid-column: 1 / -1;
-    justify-content: flex-end;
-    padding-top: 18px;
-    border-top: 1px solid var(--border);
+    grid-template-columns: minmax(0, 1fr) minmax(250px, 300px);
   }
 
   .data-table-header,
@@ -3071,6 +3064,8 @@ kbd {
   .latest-actions {
     grid-column: auto;
     justify-content: flex-start;
+    padding-top: 0;
+    border-top: 0;
   }
 
   .data-table-header {
