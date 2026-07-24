@@ -9,16 +9,18 @@
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
     "skills:build": "python3 scripts/build_skill_bundle.py",
     "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
+    "deploy": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext deploy",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
     "test": "npm run skills:build && npm run build && node --test tests/rendered-html.test.mjs && python3 -m unittest tests/test_checkpoint_skill.py tests/test_skill_bundle.py",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
+    "better-auth": "1.6.25",
     "drizzle-orm": "0.45.2",
     "geist": "^1.7.2",
     "lucide-react": "^1.25.0",
-    "next": "16.2.6",
+    "next": "16.2.11",
     "react": "19.2.6",
     "react-dom": "19.2.6"
   },
@@ -33,7 +35,7 @@
     "@vitejs/plugin-rsc": "0.5.26",
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
-    "eslint-config-next": "16.2.6",
+    "eslint-config-next": "16.2.11",
     "react-server-dom-webpack": "19.2.6",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",

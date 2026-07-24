@@ -1,16 +1,13 @@
-import { getChatGPTUser } from "../app/chatgpt-auth";
-import {
-  getRelayRuntimeEnv,
-  isLocalPreviewEnabled,
-  prepareRelayStorage,
-} from "./runtime";
+import { getSessionCookie } from "better-auth/cookies";
+import { headers } from "next/headers";
+import { getAuth, prepareAuthStorage } from "./auth";
+import { getRelayRuntimeEnv, isLocalPreviewEnabled } from "./runtime";
 import {
   claimLegacyOwnership,
-  ensureChatGPTIdentity,
   ensurePersonalOrganization,
 } from "../db/identity";
 
-export type AuthSource = "chatgpt" | "local";
+export type AuthSource = "github" | "local";
 
 export type RelayPrincipal = {
   userId: string;
@@ -23,62 +20,64 @@ export type RelayPrincipal = {
 };
 
 export async function getCurrentPrincipal(): Promise<RelayPrincipal | null> {
-  const chatGPTUser = await getChatGPTUser();
   const useLocalPreview =
     isLocalPreviewEnabled() && process.env.NODE_ENV !== "production";
+  const requestHeaders = await headers();
+  const sessionCookie = getSessionCookie(requestHeaders, {
+    cookiePrefix: "relay",
+  });
 
   // Keep the public install page independent from private checkpoint storage.
-  if (!chatGPTUser && !useLocalPreview) return null;
+  if (!sessionCookie && !useLocalPreview) return null;
+  if (!sessionCookie) return localPreviewPrincipal();
 
-  await prepareRelayStorage();
+  await prepareAuthStorage();
   const runtime = getRelayRuntimeEnv();
   const db = runtime.DB!;
+  const session = await getAuth().api.getSession({
+    headers: requestHeaders,
+  });
 
-  if (chatGPTUser) {
-    const user = await ensureChatGPTIdentity(
-      db,
-      chatGPTUser.email,
-      chatGPTUser.displayName,
-    );
+  if (session?.user) {
     const organization = await ensurePersonalOrganization(
       db,
-      user.userId,
-      user.name,
+      session.user.id,
+      session.user.name,
     );
     await claimLegacyOwnership(
       db,
-      user.email,
+      session.user.email,
       organization.organizationId,
-      user.userId,
+      session.user.id,
     );
     return {
-      userId: user.userId,
+      userId: session.user.id,
       tenantId: organization.organizationId,
       organizationName: organization.organizationName,
       role: organization.role,
-      displayName: user.name,
-      email: user.email,
-      source: "chatgpt",
+      displayName: session.user.name,
+      email: session.user.email,
+      source: "github",
     };
   }
 
-  if (useLocalPreview) {
-    return {
-      userId: "local-preview-user",
-      tenantId: "local-preview",
-      organizationName: "Local preview",
-      role: "owner",
-      displayName: "Local developer",
-      email: "local-preview",
-      source: "local",
-    };
-  }
-
-  return null;
+  return useLocalPreview ? localPreviewPrincipal() : null;
 }
 
 export function isSameOriginRequest(request: Request): boolean {
   const origin = request.headers.get("origin");
   if (!origin) return false;
   return origin === new URL(request.url).origin;
+}
+
+function localPreviewPrincipal(): RelayPrincipal {
+  return {
+    userId: "local-preview-user",
+    tenantId: "local-preview",
+    organizationName: "Local preview",
+    role: "owner",
+    displayName: "Local developer",
+    email: "local-preview",
+    source: "local",
+  };
 }

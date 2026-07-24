@@ -2334,6 +2334,38 @@ kbd {
   transform: translateY(-1px);
 }
 
+.auth-provider-button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+  transform: none;
+}
+
+.auth-provider-button > svg {
+  justify-self: center;
+}
+
+.auth-spinner {
+  animation: auth-spin 800ms linear infinite;
+}
+
+.auth-configuration-note {
+  margin: 28px 0 0;
+  padding: 12px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+@keyframes auth-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .provider-letter {
   width: 24px;
   height: 24px;

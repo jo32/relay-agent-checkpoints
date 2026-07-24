@@ -16,6 +16,11 @@ before(async () => {
     env: {
       ...process.env,
       NO_COLOR: "1",
+      BETTER_AUTH_URL: origin,
+      BETTER_AUTH_SECRET:
+        "relay-rendered-html-test-secret-with-more-than-32-characters",
+      GITHUB_CLIENT_ID: "relay-rendered-html-test-client",
+      GITHUB_CLIENT_SECRET: "relay-rendered-html-test-client-secret",
       RELAY_LOCAL_PREVIEW: "true",
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -286,7 +291,7 @@ test("renders an anonymous public checkpoint marketplace", async () => {
   assert.match(html, /aria-label="Marketplace navigation"/);
 });
 
-test("uses ChatGPT as the only interactive sign-in provider", async () => {
+test("uses Better Auth with GitHub as the only interactive sign-in provider", async () => {
   const pageSource = await readFile(
     new URL("../app/sign-in/page.tsx", import.meta.url),
     "utf8",
@@ -295,11 +300,63 @@ test("uses ChatGPT as the only interactive sign-in provider", async () => {
     new URL("../app/sign-in/sign-in-buttons.tsx", import.meta.url),
     "utf8",
   );
-  const authSources = `${pageSource}\n${buttonSource}`;
+  const serverAuthSource = await readFile(
+    new URL("../lib/auth.ts", import.meta.url),
+    "utf8",
+  );
+  const authSources = `${pageSource}\n${buttonSource}\n${serverAuthSource}`;
 
-  assert.match(authSources, /Continue with ChatGPT/);
-  assert.match(authSources, /\/signin-with-chatgpt\?return_to=/);
-  assert.doesNotMatch(authSources, /Google|GitHub|signIn\.social/);
+  assert.match(authSources, /Continue with GitHub/);
+  assert.match(authSources, /signIn\.social/);
+  assert.match(authSources, /provider: "github"/);
+  assert.match(serverAuthSource, /database: drizzleAdapter\(drizzle\(runtime\.DB\)/);
+  assert.match(serverAuthSource, /encryptOAuthTokens: true/);
+  assert.match(serverAuthSource, /cookiePrefix: "relay"/);
+  assert.doesNotMatch(
+    authSources,
+    /Google|ChatGPT|signin-with-chatgpt|signout-with-chatgpt/,
+  );
+});
+
+test("starts GitHub OAuth and rejects external callback URLs", async () => {
+  const response = await fetch(`${origin}/api/auth/sign-in/social`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      origin,
+    },
+    body: JSON.stringify({
+      provider: "github",
+      callbackURL: "/device?code=ABCD-EFGH",
+      errorCallbackURL: "/sign-in",
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("set-cookie") ?? "", /relay\.state=/);
+
+  const payload = await response.json();
+  const authorizationURL = new URL(payload.url);
+  assert.equal(authorizationURL.origin, "https://github.com");
+  assert.equal(authorizationURL.pathname, "/login/oauth/authorize");
+  assert.match(authorizationURL.searchParams.get("scope") ?? "", /user:email/);
+  assert.equal(
+    authorizationURL.searchParams.get("redirect_uri"),
+    `${origin}/api/auth/callback/github`,
+  );
+
+  const rejected = await fetch(`${origin}/api/auth/sign-in/social`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      origin,
+    },
+    body: JSON.stringify({
+      provider: "github",
+      callbackURL: "https://example.invalid/steal-session",
+    }),
+  });
+  assert.equal(rejected.status, 403);
 });
 
 test("leads with Relay's explicit private and public security boundary", async () => {
@@ -334,10 +391,13 @@ test("leads with Relay's explicit private and public security boundary", async (
   assert.match(landingSource, /Do not sign in, connect an account/);
   assert.match(landingSource, /approved\s+or pseudonymous agent metadata/);
   assert.match(landingSource, /Shared or pseudonymous, independently/);
-  assert.match(principalSource, /if \(!chatGPTUser && !useLocalPreview\) return null/);
+  assert.match(
+    principalSource,
+    /if \(!sessionCookie && !useLocalPreview\) return null/,
+  );
   assert.ok(
     principalSource.indexOf("return null") <
-      principalSource.indexOf("await prepareRelayStorage()"),
+      principalSource.indexOf("await prepareAuthStorage()"),
     "anonymous landing page should not depend on private checkpoint storage",
   );
 });

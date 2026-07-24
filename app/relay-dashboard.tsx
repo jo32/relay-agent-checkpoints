@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { authClient } from "../lib/auth-client";
 import type { AuthSource } from "../lib/principal";
 
 type CheckpointPublication = {
@@ -251,9 +252,15 @@ export default function RelayDashboard({
     setMobileNavOpen(false);
   }
 
-  function signOut() {
-    if (authSource === "chatgpt") {
-      window.location.assign("/signout-with-chatgpt?return_to=%2Fsign-in");
+  async function signOut() {
+    if (authSource === "local") return;
+
+    try {
+      const result = await authClient.signOut();
+      if (result.error) throw new Error(result.error.message);
+      window.location.assign("/sign-in");
+    } catch {
+      setToast("Sign out failed. Please try again.");
     }
   }
 

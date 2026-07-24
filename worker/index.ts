@@ -6,6 +6,11 @@ interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
   CHECKPOINTS: R2Bucket;
+  BETTER_AUTH_URL: string;
+  BETTER_AUTH_SECRET: string;
+  GITHUB_CLIENT_ID: string;
+  GITHUB_CLIENT_SECRET: string;
+  RELAY_LOCAL_PREVIEW?: string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {

@@ -1,9 +1,3 @@
-type IdentityRow = {
-  userId: string;
-  name: string;
-  email: string;
-};
-
 type MembershipRow = {
   organizationId: string;
   organizationName: string;
@@ -293,86 +287,6 @@ async function ensureColumn(
   const result = await db.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>();
   if (result.results.some((field) => field.name === column)) return;
   await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
-}
-
-export async function ensureChatGPTIdentity(
-  db: D1Database,
-  email: string,
-  displayName: string,
-): Promise<IdentityRow> {
-  const normalizedEmail = email.trim().toLowerCase();
-  const existing = await findIdentityByAccount(db, "chatgpt", normalizedEmail);
-  if (existing) {
-    await db
-      .prepare(
-        "UPDATE user SET name = ?, email_verified = 1, updated_at = ? WHERE id = ?",
-      )
-      .bind(displayName, Date.now(), existing.userId)
-      .run();
-    return { ...existing, name: displayName };
-  }
-
-  const emailUser = await db
-    .prepare(
-      "SELECT id AS userId, name, email FROM user WHERE lower(email) = ? LIMIT 1",
-    )
-    .bind(normalizedEmail)
-    .first<IdentityRow>();
-  const userId = emailUser?.userId ?? createId("usr");
-  const now = Date.now();
-
-  if (!emailUser) {
-    await db
-      .prepare(
-        `INSERT INTO user (
-          id, name, email, email_verified, image, created_at, updated_at
-        ) VALUES (?, ?, ?, 1, NULL, ?, ?)`,
-      )
-      .bind(userId, displayName, normalizedEmail, now, now)
-      .run();
-  } else {
-    await db
-      .prepare(
-        "UPDATE user SET name = ?, email_verified = 1, updated_at = ? WHERE id = ?",
-      )
-      .bind(displayName, now, userId)
-      .run();
-  }
-
-  await db
-    .prepare(
-      `INSERT OR IGNORE INTO account (
-        id, account_id, provider_id, user_id, created_at, updated_at
-      ) VALUES (?, ?, 'chatgpt', ?, ?, ?)`,
-    )
-    .bind(createId("acct"), normalizedEmail, userId, now, now)
-    .run();
-
-  return {
-    userId,
-    name: displayName,
-    email: normalizedEmail,
-  };
-}
-
-async function findIdentityByAccount(
-  db: D1Database,
-  providerId: string,
-  accountId: string,
-): Promise<IdentityRow | null> {
-  return db
-    .prepare(
-      `SELECT
-        user.id AS userId,
-        user.name,
-        user.email
-      FROM account
-      JOIN user ON user.id = account.user_id
-      WHERE account.provider_id = ? AND account.account_id = ?
-      LIMIT 1`,
-    )
-    .bind(providerId, accountId)
-    .first<IdentityRow>();
 }
 
 export async function ensurePersonalOrganization(

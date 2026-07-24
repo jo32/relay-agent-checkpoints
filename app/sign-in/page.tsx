@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { isGitHubAuthConfigured } from "../../lib/auth";
 import { getCurrentPrincipal } from "../../lib/principal";
 import SignInButtons from "./sign-in-buttons";
 
@@ -15,11 +16,13 @@ export const dynamic = "force-dynamic";
 export default async function SignInPage({
   searchParams,
 }: {
-  searchParams: Promise<{ return_to?: string }>;
+  searchParams: Promise<{ return_to?: string; error?: string }>;
 }) {
-  const returnTo = safeReturnTo((await searchParams).return_to);
+  const params = await searchParams;
+  const returnTo = safeReturnTo(params.return_to);
   const principal = await getCurrentPrincipal();
   if (principal) redirect(returnTo);
+  const githubEnabled = isGitHubAuthConfigured();
 
   return (
     <main className="auth-page">
@@ -48,7 +51,20 @@ export default async function SignInPage({
           </p>
         </div>
 
-        <SignInButtons callbackURL={returnTo} />
+        {githubEnabled ? (
+          <SignInButtons
+            callbackURL={returnTo}
+            initialError={
+              params.error
+                ? "GitHub sign-in was not completed. Please try again."
+                : undefined
+            }
+          />
+        ) : (
+          <p className="auth-configuration-note" role="status">
+            GitHub sign-in is not configured for this deployment.
+          </p>
+        )}
 
         <p className="auth-legal">Relay never stores your encryption key.</p>
       </section>
@@ -61,6 +77,12 @@ function safeReturnTo(value: string | undefined) {
   try {
     const parsed = new URL(value, "https://relay.local");
     if (parsed.origin !== "https://relay.local") return "/";
+    if (
+      parsed.pathname === "/sign-in" ||
+      parsed.pathname.startsWith("/api/auth/")
+    ) {
+      return "/";
+    }
     return `${parsed.pathname}${parsed.search}`;
   } catch {
     return "/";

@@ -66,9 +66,48 @@ required before a checkpoint becomes public.
 
 Requires Node.js 22.13 or newer and Python 3.10 or newer.
 
+Create a GitHub OAuth app for local development with:
+
+- Homepage URL: `http://localhost:3000`
+- Authorization callback URL:
+  `http://localhost:3000/api/auth/callback/github`
+
+Copy `.env.example` to `.env.local`, set the GitHub client ID and secret, and
+replace `BETTER_AUTH_SECRET` with a stable random value of at least 32
+characters. For example, generate one with `openssl rand -base64 32`.
+
 ```bash
 npm install
 npm run dev
+```
+
+Relay uses Better Auth with GitHub as its only browser sign-in provider. The
+GitHub access token stored in D1 is encrypted with `BETTER_AUTH_SECRET`. Keep
+that secret stable so existing accounts remain usable. GitHub OAuth Apps accept
+one callback URL, so use separate OAuth apps for local and production
+environments.
+
+For Cloudflare Workers, configure `BETTER_AUTH_URL` and `GITHUB_CLIENT_ID` as
+Worker variables, and store both secrets with Wrangler:
+
+```bash
+npx wrangler secret put BETTER_AUTH_SECRET
+npx wrangler secret put GITHUB_CLIENT_SECRET
+```
+
+Set the production GitHub callback to
+`https://your-relay-site/api/auth/callback/github`. Apply the checked-in D1
+migrations before serving production traffic.
+
+The checked-in `wrangler.jsonc` deploys Relay directly to Cloudflare Workers
+with its D1 database, R2 bucket, Images binding, and
+`relay.getmegaportal.com/*` route. The hostname uses a proxied placeholder DNS
+record because every request is handled by the Worker; no origin server is
+contacted.
+
+```bash
+npx wrangler d1 migrations apply relay-db --remote
+npm run deploy
 ```
 
 Run the complete validation suite with:
