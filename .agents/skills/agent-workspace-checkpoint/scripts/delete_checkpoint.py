@@ -11,14 +11,12 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from pathlib import Path
 
 from relay_credentials import (
     RelayCredentialError,
     load_access_token,
     normalize_api_url,
 )
-from relay_crypto import checkpoint_key_path
 
 
 CHECKPOINT_ID_PATTERN = re.compile(r"^cp_[A-Za-z0-9_-]{6,80}$")
@@ -29,11 +27,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--api-url", default=os.environ.get("RELAY_API_URL"))
     parser.add_argument("--api-token", default=os.environ.get("RELAY_API_TOKEN"))
-    parser.add_argument(
-        "--delete-local-key",
-        action="store_true",
-        help="Also remove Relay's locally saved generated recovery key, if present",
-    )
     parser.add_argument(
         "--yes",
         action="store_true",
@@ -77,7 +70,6 @@ def main() -> int:
 
     checkpoint = metadata["checkpoint"]
     visibility = str(checkpoint.get("visibility", "private"))
-    key_path = checkpoint_key_path(checkpoint_id)
     if not args.yes:
         print(
             f"Delete Relay checkpoint {checkpoint_id} ({visibility}) permanently.",
@@ -87,11 +79,6 @@ def main() -> int:
             print(
                 "Its public URL and marketplace listing will stop working, but "
                 "downloaded or cached copies cannot be retracted.",
-                file=sys.stderr,
-            )
-        if args.delete_local_key and key_path.exists():
-            print(
-                f"The locally saved recovery key at {key_path} will also be removed.",
                 file=sys.stderr,
             )
         print(
@@ -115,26 +102,11 @@ def main() -> int:
             f"{deleted.get('error', 'invalid response')}"
         )
 
-    key_removed = False
-    key_error = None
-    if args.delete_local_key and key_path.exists():
-        try:
-            key_path.unlink()
-            key_removed = True
-        except OSError as error:
-            key_error = f"Unable to remove local recovery key: {error}"
-
     result = {
         "deleted": True,
         "checkpointId": checkpoint_id,
         "visibility": visibility,
         "deletedObjects": deleted.get("deletedObjects"),
-        "localKey": {
-            "requested": bool(args.delete_local_key),
-            "path": str(key_path),
-            "removed": key_removed,
-            "error": key_error,
-        },
         "localArchivesRemoved": False,
         "publicCopiesWarning": deleted.get("publicCopiesWarning"),
     }
@@ -142,10 +114,6 @@ def main() -> int:
         print(json.dumps(result, indent=2))
     else:
         print(f"Deleted Relay checkpoint {checkpoint_id}.")
-        if key_removed:
-            print(f"Deleted local recovery key: {key_path}")
-        elif key_error:
-            print(key_error, file=sys.stderr)
         print("Local checkpoint archives were not removed.")
         if result["publicCopiesWarning"]:
             print(result["publicCopiesWarning"])

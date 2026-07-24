@@ -97,7 +97,7 @@ def canonicalize_public_archive(
                 forbidden_secrets,
             ):
                 raise PublicCheckpointError(
-                    "Public checkpoint contains the private checkpoint recovery key"
+                    "Public checkpoint contains the private checkpoint decryption secret"
                 )
             try:
                 name = validate_member_name(member.name)
@@ -174,7 +174,7 @@ def canonicalize_public_archive(
                 forbidden_secrets,
             ):
                 raise PublicCheckpointError(
-                    "Public checkpoint contains the private checkpoint recovery key"
+                    "Public checkpoint contains the private checkpoint decryption secret"
                 )
             try:
                 path = validate_member_name(raw_path)
@@ -238,9 +238,9 @@ def canonicalize_public_archive(
                     end=offset + size,
                 )
                 if secret:
-                    if secret == "the private checkpoint recovery key":
+                    if secret == "the private checkpoint decryption secret":
                         raise PublicCheckpointError(
-                            "Public checkpoint contains the private checkpoint recovery key"
+                            "Public checkpoint contains the private checkpoint decryption secret"
                         )
                     raise PublicCheckpointError(
                         f"Public checkpoint blocked {path}: {secret}"
@@ -478,7 +478,7 @@ def public_secret_reason(
         if secret and (
             secret in path_bytes or data.find(secret, start, limit) >= 0
         ):
-            return "the private checkpoint recovery key"
+            return "the private checkpoint decryption secret"
     for part in pure.parts:
         denied = DENY_DIRS.get(part) or DENY_DIRS.get(part.casefold())
         if denied:

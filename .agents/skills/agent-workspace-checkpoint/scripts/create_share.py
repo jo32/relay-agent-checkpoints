@@ -72,8 +72,9 @@ def main() -> int:
     else:
         print(share_url)
         print(
-            "The link contains no encryption key. Share the key separately; "
-            "the recipient will enter it at the hidden restore prompt.",
+            "The link contains no decryption secret. Tell the recipient the "
+            "shared passphrase or recovery key through an appropriate private "
+            "channel; they will enter it at the hidden restore prompt.",
             file=sys.stderr,
         )
     return 0

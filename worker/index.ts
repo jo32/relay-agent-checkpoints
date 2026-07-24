@@ -11,6 +11,8 @@ interface Env {
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
   RELAY_LOCAL_PREVIEW?: string;
+  VIBELOFT_PRODUCT_ID?: string;
+  VIBELOFT_WEB_AUTH_KEY?: string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {

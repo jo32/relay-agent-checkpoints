@@ -66,7 +66,7 @@ export default async function SignInPage({
           </p>
         )}
 
-        <p className="auth-legal">Relay never stores your encryption key.</p>
+        <p className="auth-legal">Relay never stores your checkpoint decryption secret.</p>
       </section>
     </main>
   );

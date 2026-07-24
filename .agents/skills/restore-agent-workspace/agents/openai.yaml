@@ -1,4 +1,4 @@
 interface:
   display_name: "Restore Agent Workspace"
   short_description: "Merge or separately restore Relay checkpoints"
-  default_prompt: "Use $restore-agent-workspace to ask whether I want to merge the Relay checkpoint into the current agent workspace or restore it separately, then verify and restore it. Private checkpoints decrypt locally with a key; public checkpoint URLs require neither sign-in nor a recovery key."
+  default_prompt: "Use $restore-agent-workspace to ask whether I want to merge the Relay checkpoint into the current agent workspace or restore it separately, then verify and restore it. Private checkpoints always request my passphrase or recovery key through a hidden local prompt and decrypt locally; public checkpoint URLs require neither sign-in nor a decryption secret."

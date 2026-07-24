@@ -9,6 +9,7 @@ import json
 import mmap
 import os
 import secrets
+import sys
 import tarfile
 import tempfile
 import urllib.parse
@@ -31,9 +32,8 @@ from checkpoint_lib import (
 from relay_crypto import (
     RelayCryptoError,
     encrypt_checkpoint,
-    generate_checkpoint_key,
-    prompt_checkpoint_key,
-    save_checkpoint_key,
+    generate_checkpoint_recovery_key,
+    prompt_new_checkpoint_passphrase,
 )
 from relay_credentials import RelayCredentialError, load_access_token
 from relay_upload import RelayUploadError, upload_checkpoint
@@ -80,22 +80,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Confirm intentional public disclosure non-interactively",
     )
-    key_mode = parser.add_mutually_exclusive_group()
-    key_mode.add_argument(
+    parser.add_argument(
         "--generate-key",
-        action="store_const",
-        const="generate",
-        dest="key_mode",
-        help="Generate and securely save a recovery key without prompting (default)",
+        action="store_true",
+        help=(
+            "Generate a recovery key and display it once instead of prompting "
+            "for a passphrase"
+        ),
     )
-    key_mode.add_argument(
-        "--prompt-key",
-        action="store_const",
-        const="prompt",
-        dest="key_mode",
-        help="Ask for a user-chosen key through the hidden local prompt",
-    )
-    parser.set_defaults(key_mode=None)
     parser.add_argument("--json", action="store_true", dest="json_output")
     return parser.parse_args()
 
@@ -173,11 +165,8 @@ def main() -> int:
     checkpoint_id = f"cp_{secrets.token_hex(16)}"
     label = args.label.strip() or "agent-handoff"
     is_public = args.visibility == "public"
-    if is_public and args.key_mode is not None:
-        raise SystemExit(
-            "Public checkpoints do not use --generate-key or --prompt-key"
-        )
-    key_mode = args.key_mode or "generate"
+    if is_public and args.generate_key:
+        raise SystemExit("Public checkpoints do not use --generate-key")
     try:
         publication = (
             public_metadata(args.public_title, args.public_description)
@@ -323,10 +312,15 @@ def main() -> int:
             if is_public and publication
             else None
         ),
-        "keyMode": None if is_public else key_mode,
-        "keyGenerated": False,
-        "keyStored": False,
-        "keyFile": None,
+        "secretMode": (
+            None
+            if is_public
+            else "generated-recovery-key"
+            if args.generate_key
+            else "passphrase"
+        ),
+        "secretStored": False,
+        "recoveryKey": None,
         "agent": agent_metadata,
         "agentMetadataFile": None,
         "dryRun": args.dry_run,
@@ -345,18 +339,14 @@ def main() -> int:
 
     if not args.dry_run:
         output_dir.mkdir(parents=True, exist_ok=True)
-        generated_key_path: Path | None = None
         try:
-            checkpoint_key: bytes | None = None
+            checkpoint_secret: bytes | None = None
             if not is_public:
-                if key_mode == "generate":
-                    checkpoint_key = generate_checkpoint_key()
-                    generated_key_path = save_checkpoint_key(
-                        checkpoint_id,
-                        checkpoint_key,
-                    )
-                else:
-                    checkpoint_key = prompt_checkpoint_key()
+                checkpoint_secret = (
+                    generate_checkpoint_recovery_key()
+                    if args.generate_key
+                    else prompt_new_checkpoint_passphrase()
+                )
             with tempfile.TemporaryDirectory(
                 prefix="relay-checkpoint-"
             ) as temporary:
@@ -440,12 +430,12 @@ def main() -> int:
                             archive_path.unlink(missing_ok=True)
                             raise SystemExit("Public checkpoint creation cancelled")
                 else:
-                    assert checkpoint_key is not None
+                    assert checkpoint_secret is not None
                     encrypt_checkpoint(
                         plaintext_path,
                         archive_path,
                         checkpoint_id,
-                        checkpoint_key,
+                        checkpoint_secret,
                     )
         except (
             OSError,
@@ -454,14 +444,11 @@ def main() -> int:
             tarfile.TarError,
         ) as error:
             archive_path.unlink(missing_ok=True)
-            if generated_key_path is not None:
-                generated_key_path.unlink(missing_ok=True)
             raise SystemExit(str(error)) from error
 
-        if generated_key_path is not None:
-            summary["keyGenerated"] = True
-            summary["keyStored"] = True
-            summary["keyFile"] = str(generated_key_path)
+        if args.generate_key:
+            assert checkpoint_secret is not None
+            summary["recoveryKey"] = checkpoint_secret.decode("ascii")
 
         archive_hash = sha256_file(archive_path)
         sidecar = archive_path.with_name(archive_path.name + ".sha256")
@@ -492,15 +479,16 @@ def main() -> int:
                     public_metadata=publication,
                 )
             except (OSError, RelayUploadError) as error:
-                raise SystemExit(str(error)) from error
-            summary["uploaded"] = True
-            summary["relay"] = upload_result
-            if is_public:
-                summary["publicUrl"] = (
-                    f"{args.api_url.rstrip('/')}/api/public/checkpoints/"
-                    f"{urllib.parse.quote(checkpoint_id, safe='')}/download"
-                )
-                summary["marketplaceUrl"] = upload_result["marketplace"]["url"]
+                summary["uploadError"] = str(error)
+            else:
+                summary["uploaded"] = True
+                summary["relay"] = upload_result
+                if is_public:
+                    summary["publicUrl"] = (
+                        f"{args.api_url.rstrip('/')}/api/public/checkpoints/"
+                        f"{urllib.parse.quote(checkpoint_id, safe='')}/download"
+                    )
+                    summary["marketplaceUrl"] = upload_result["marketplace"]["url"]
 
     if args.json_output:
         print(json.dumps(summary, indent=2))
@@ -521,26 +509,37 @@ def main() -> int:
                     f"{publication['title']} — {publication['description']}"
                 )
                 print(
-                    "Recovery key: not created; this public checkpoint is "
+                    "Passphrase: not required; this public checkpoint is "
                     "intentionally readable."
                 )
-            elif summary["keyStored"]:
-                print(f"Recovery key: generated and saved to {summary['keyFile']}")
-                print("Keep the recovery key file private and backed up separately.")
+            elif args.generate_key:
+                print("Generated recovery key (displayed once; not stored):")
+                print(summary["recoveryKey"])
+                print(
+                    "Save this key now. Enter it at the hidden prompt to restore."
+                )
             else:
-                print("Encryption key: not stored; enter the same key to restore.")
+                print(
+                    "Passphrase: chosen interactively and not stored. "
+                    "Enter the same passphrase to restore."
+                )
             if summary["uploaded"]:
                 print(f"Relay checkpoint: {summary['relay']['checkpoint']['id']}")
                 if is_public:
                     print(f"Public URL: {summary['publicUrl']}")
                     print(f"Marketplace: {summary['marketplaceUrl']}")
+            elif summary.get("uploadError"):
+                print(
+                    f"Relay upload failed: {summary['uploadError']}",
+                    file=sys.stderr,
+                )
         if excluded:
             print("Excluded:")
             for item in excluded[:40]:
                 print(f"  - {item.path}: {item.reason}")
             if len(excluded) > 40:
                 print(f"  … and {len(excluded) - 40} more")
-    return 0
+    return 1 if summary.get("uploadError") else 0
 
 
 if __name__ == "__main__":
