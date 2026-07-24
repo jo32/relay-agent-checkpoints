@@ -177,7 +177,7 @@ export function RelayLanding() {
                 <div className="ready-strip">
                   <span className="ready-pulse" aria-hidden="true" />
                   <div>
-                    <strong>Checkpoint secured — key stays local</strong>
+                    <strong>Checkpoint secured — decryption secret stays with you</strong>
                     <small>Private mode stores ciphertext, never plaintext.</small>
                   </div>
                 </div>
@@ -195,7 +195,7 @@ export function RelayLanding() {
               <LockKeyhole size={16} />
               <span>
                 <strong>Zero knowledge</strong>
-                Private checkpoint keys never reach Relay
+                Private decryption secrets never reach Relay
               </span>
             </div>
           </div>
@@ -248,8 +248,9 @@ export function RelayLanding() {
               <p className="journey-status local">Your choice</p>
               <h3>Choose who can read it</h3>
               <p>
-                Private checkpoints are sealed locally with AES-256-GCM. Public
-                checkpoints use no key and publish only the title, description,
+                Private checkpoints are sealed locally with your passphrase or
+                displayed recovery key and AES-256-GCM. Public checkpoints use no
+                decryption secret and publish only the title, description,
                 metadata, and files you explicitly approve.
               </p>
             </article>
@@ -260,8 +261,9 @@ export function RelayLanding() {
               <p className="journey-status once">Cryptographically checked</p>
               <h3>Restore with proof</h3>
               <p>
-                Private restore decrypts locally. Public restore needs no sign-in or
-                key. Both paths reject unsafe paths and verify every file hash.
+                Private restore decrypts locally after a hidden secret prompt.
+                Public restore needs no sign-in or decryption secret. Both paths reject
+                unsafe paths and verify every file hash.
               </p>
             </article>
           </div>
@@ -274,12 +276,12 @@ export function RelayLanding() {
             <p>
               A private archive is encrypted before it leaves your workspace.
               Publishing creates a separate readable artifact only after a local
-              preview and explicit confirmation; it never uploads the original key.
+              preview and explicit confirmation; it never uploads your decryption secret.
             </p>
             <div className="backup-facts">
               <span><Check size={14} /> AES-256-GCM encryption</span>
               <span><Check size={14} /> Secrets excluded before packing</span>
-              <span><Check size={14} /> Recovery key stays local</span>
+              <span><Check size={14} /> Secret is never sent to Relay</span>
               <span><Check size={14} /> Every restored file is verified</span>
               <span><Check size={14} /> Public artifacts are clearly labeled</span>
               <span><Check size={14} /> Publication is effectively irreversible</span>
@@ -298,7 +300,7 @@ export function RelayLanding() {
             <div className="backup-message agent">
               <span className="mini-mark"><SquareTerminal size={13} /></span>
               <div>
-                <p>Secrets excluded. Workspace encrypted locally. Recovery key saved separately.</p>
+                <p>Secrets excluded. Choose a passphrase or receive a recovery key once.</p>
                 <strong>AES-256-GCM &nbsp; · &nbsp; manifest sealed</strong>
               </div>
             </div>
@@ -306,7 +308,7 @@ export function RelayLanding() {
               <ShieldCheck size={16} />
               <div>
                 <strong>Ciphertext uploaded · integrity verified</strong>
-                <span>Relay received no source files, workspace name, or recovery key</span>
+                <span>Relay received no source files, workspace name, or decryption secret</span>
               </div>
             </div>
           </div>

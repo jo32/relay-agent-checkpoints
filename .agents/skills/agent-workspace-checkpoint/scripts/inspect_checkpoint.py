@@ -13,11 +13,9 @@ from pathlib import Path
 from checkpoint_lib import sha256_file, validate_member_name
 from relay_crypto import (
     RelayCryptoError,
-    checkpoint_key_path,
     decrypt_checkpoint,
     is_encrypted_checkpoint,
-    load_checkpoint_key,
-    prompt_checkpoint_key,
+    prompt_checkpoint_secret,
     read_encrypted_header,
 )
 
@@ -27,11 +25,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("archive", type=Path)
     parser.add_argument("--verify", action="store_true")
     parser.add_argument("--show-excluded", action="store_true")
-    parser.add_argument(
-        "--key-file",
-        type=Path,
-        help="Permission-restricted recovery key file; otherwise use the saved key or prompt",
-    )
     parser.add_argument("--json", action="store_true", dest="json_output")
     return parser.parse_args()
 
@@ -44,28 +37,18 @@ def main() -> int:
 
     encrypted = is_encrypted_checkpoint(archive_path)
     header: dict[str, object] | None = None
-    used_key_file: Path | None = None
     with tempfile.TemporaryDirectory(prefix="relay-inspect-") as temporary:
         inspect_path = archive_path
         if encrypted:
             try:
                 header = read_encrypted_header(archive_path)
                 checkpoint_id = str(header["checkpointId"])
-                candidate = (
-                    args.key_file.expanduser()
-                    if args.key_file
-                    else checkpoint_key_path(checkpoint_id)
-                )
-                if args.key_file or candidate.exists():
-                    key = load_checkpoint_key(candidate)
-                    used_key_file = candidate.resolve()
-                else:
-                    key = prompt_checkpoint_key()
+                secret = prompt_checkpoint_secret()
                 inspect_path = Path(temporary) / "checkpoint.tar.gz"
                 decrypt_checkpoint(
                     archive_path,
                     inspect_path,
-                    key,
+                    secret,
                     checkpoint_id,
                 )
             except RelayCryptoError as error:
@@ -140,8 +123,8 @@ def main() -> int:
             else (0 if manifest.get("visibility") == "public" else 1)
         ),
         "cipher": header.get("cipher") if header else "none",
-        "keyStored": used_key_file is not None,
-        "keyFile": str(used_key_file) if used_key_file else None,
+        "decryptionSecretRequired": encrypted,
+        "secretStored": False,
         "sidecarVerified": sidecar_ok,
         "checkpointId": manifest.get("checkpointId"),
         "workspace": manifest.get("workspace"),

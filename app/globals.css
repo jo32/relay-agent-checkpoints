@@ -1980,11 +1980,24 @@ kbd {
 }
 
 .entity-cell .mono {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 4px;
+  overflow: hidden;
   color: var(--faint);
   font-size: 8px;
+  white-space: nowrap;
+}
+
+.entity-cell .mono > svg {
+  flex: 0 0 auto;
+}
+
+.entity-cell .mono > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .agent-cell {

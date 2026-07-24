@@ -2,16 +2,16 @@
   <img src="./public/relay-logo.svg" alt="Relay" width="250">
 </h1>
 
-Relay is a checkpoint registry for agent workspaces with an explicit visibility boundary. Private checkpoints are zero-knowledge ciphertext. Public checkpoints are separate, intentionally readable artifacts with stable anonymous download URLs. Relay does not run coding agents, and it never asks for a checkpoint recovery key in the browser.
+Relay is a checkpoint registry for agent workspaces with an explicit visibility boundary. Private checkpoints are zero-knowledge ciphertext. Public checkpoints are separate, intentionally readable artifacts with stable anonymous download URLs. Relay does not run coding agents, and it never asks for a checkpoint passphrase in the browser.
 
 Two local skills own the workflow:
 
 1. `agent-workspace-checkpoint` selects safe files, removes secrets and reproducible state, and builds the semantic handoff. It can encrypt a private checkpoint locally with AES-256-GCM, create a public checkpoint without a key, or locally publish a separate public artifact from an existing private checkpoint.
-2. `restore-agent-workspace` asks whether to merge into the current agent workspace or restore separately, then verifies and restores a private checkpoint ID, expiring private share URL, or stable public URL. Private restore obtains and uses the key locally; public restore needs no key or Relay sign-in.
+2. `restore-agent-workspace` asks whether to merge into the current agent workspace or restore separately, then verifies and restores a private checkpoint ID, expiring private share URL, or stable public URL. Private restore asks for the passphrase or recovery key locally; public restore needs no decryption secret or Relay sign-in.
 
-Private is the default. The user can ask the skill to generate a recovery key or supply a key of at least 8 characters through a hidden local prompt. Generated keys are saved outside the project in a permission-restricted local file; user-entered keys are not stored. The skill uses salted scrypt to derive the 256-bit cipher key locally. Relay never receives either kind of key.
+Private is the default. The recommended flow uses a user-chosen passphrase of at least 8 characters; creation asks for it twice through hidden local prompts to catch typos. The user may instead explicitly choose a generated 43-character recovery key. It is displayed once in the command output and returned by the agent, never saved to a key file. Restore, inspect, and private-to-public publication accept either secret through one hidden local prompt. The skill uses salted scrypt to derive the 256-bit cipher key locally, and Relay never receives the secret.
 
-Public creation does not generate, request, or store a recovery key. Before upload, the skill asks locally for a public title and description, shows the complete public preview, warns that publication is effectively irreversible, and requires explicit confirmation. Publishing an existing private checkpoint decrypts, validates, sanitizes, and re-scans it locally, then uploads only the new public artifact. The original key is never sent to or stored by Relay.
+Public creation does not request or store a decryption secret. Before upload, the skill asks locally for a public title and description, shows the complete public preview, warns that publication is effectively irreversible, and requires explicit confirmation. Publishing an existing private checkpoint decrypts, validates, sanitizes, and re-scans it locally, then uploads only the new public artifact. The private secret is never sent to or stored by Relay.
 
 ## Install the skills
 
@@ -27,7 +27,7 @@ Current workspace
       │ $agent-workspace-checkpoint
       ▼
 Sanitized, locally verified state
-      ├── private (default) ── local key + scrypt + AES-256-GCM
+      ├── private (default) ── passphrase or displayed key + scrypt + AES-256-GCM
       │                      └── opaque .relay ciphertext
       │
       └── public ──────────── no key + approved public metadata
@@ -47,7 +47,7 @@ Every intentionally public checkpoint is added to Relay's anonymous marketplace
 index as part of the same durable publication operation. The index contains only
 approved public title and description fields plus the already shared or
 pseudonymous agent profile; it never projects private workspace names, handoffs,
-Git state, ownership details, source ciphertext checksums, or recovery keys.
+Git state, ownership details, source ciphertext checksums, or decryption secrets.
 
 Browse the marketplace at `/marketplace`. Its anonymous API is
 `GET /api/public/checkpoints` and supports:
@@ -76,6 +76,12 @@ Copy `.env.example` to `.env.local`, set the GitHub client ID and secret, and
 replace `BETTER_AUTH_SECRET` with a stable random value of at least 32
 characters. For example, generate one with `openssl rand -base64 32`.
 
+Optional VibeLoft telemetry uses `VIBELOFT_PRODUCT_ID` and
+`VIBELOFT_WEB_AUTH_KEY` from the same ignored `.env.local`. The layout renders
+the telemetry script only when both values are present. VibeLoft's web key is
+origin-bound and browser-visible by design; environment configuration keeps it
+out of source control but does not make it secret from site visitors.
+
 ```bash
 npm install
 npm run dev
@@ -93,6 +99,8 @@ Worker variables, and store both secrets with Wrangler:
 ```bash
 npx wrangler secret put BETTER_AUTH_SECRET
 npx wrangler secret put GITHUB_CLIENT_SECRET
+npx wrangler secret put VIBELOFT_PRODUCT_ID
+npx wrangler secret put VIBELOFT_WEB_AUTH_KEY
 ```
 
 Set the production GitHub callback to
@@ -147,14 +155,26 @@ python3 .agents/skills/agent-workspace-checkpoint/scripts/create_checkpoint.py \
   --agent-name "Release Gardener" \
   --agent-description "Hardened checkpoint uploads and documented the verified handoff." \
   --label before-handoff \
+  --upload \
+  --json
+```
+
+The command asks the user to choose and confirm a passphrase through hidden local prompts. The passphrase may contain spaces and Unicode, is never included in command arguments or output, and is not stored. The user must enter the same passphrase when restoring on another machine. The agent also asks whether Relay may display a name and one-sentence summary of its work. If metadata sharing is declined or unanswered, the skill generates a playful name such as “Quantum Goose” and uses a generic privacy-safe description.
+
+Alternatively, after the user explicitly chooses a generated recovery key, add `--generate-key`. The command returns the new 43-character key once in its `recoveryKey` output field; the agent must send that exact key to the user so they can save it. The key is not written to a file:
+
+```bash
+python3 .agents/skills/agent-workspace-checkpoint/scripts/create_checkpoint.py \
+  --root /absolute/path/to/project \
+  --visibility private \
   --generate-key \
   --upload \
   --json
 ```
 
-The agent asks whether to generate and securely save a recovery key (recommended/default) or use a user-chosen key, and whether Relay may display a name and one-sentence summary of the agent's work. If metadata sharing is declined or unanswered, the skill generates a playful name such as “Quantum Goose” and uses a generic privacy-safe description. `--generate-key` needs no terminal input and returns only the protected recovery-key file path. Use `--prompt-key` for one hidden prompt accepting any key of at least 8 characters; Relay does not ask for confirmation by entering it again. Key contents are never included in command arguments or output.
+If the upload fails after encryption, the command still returns the one-time key together with `uploadError` and a nonzero status, so the already encrypted archive remains usable and can be retried without recreation.
 
-Create and upload a public checkpoint without a recovery key:
+Create and upload a public checkpoint without a passphrase:
 
 ```bash
 python3 .agents/skills/agent-workspace-checkpoint/scripts/create_checkpoint.py \
@@ -169,7 +189,7 @@ python3 .agents/skills/agent-workspace-checkpoint/scripts/create_checkpoint.py \
   --json
 ```
 
-Public mode rejects `--generate-key` and `--prompt-key`. A public `--dry-run --json` returns the exact file paths and sanitized manifest metadata. Review that preview first; `--yes` records the user's explicit approval. Without `--yes`, creation prints the same preview and waits for `public` before writing or uploading the readable artifact. Anyone with the resulting stable URL can inspect and restore it without a key or Relay account.
+Public mode never requests a decryption secret and rejects `--generate-key`. A public `--dry-run --json` returns the exact file paths and sanitized manifest metadata. Review that preview first; `--yes` records the user's explicit approval. Without `--yes`, creation prints the same preview and waits for `public` before writing or uploading the readable artifact. Anyone with the resulting stable URL can inspect and restore it without a secret or Relay account.
 
 Make an existing private checkpoint public:
 
@@ -182,9 +202,9 @@ python3 .agents/skills/agent-workspace-checkpoint/scripts/publish_checkpoint.py 
   --json
 ```
 
-The publication script uses the protected locally saved key when available. Use `--key-file /protected/path/cp_123.key` for a separately received key file; otherwise the script uses one hidden local prompt. It decrypts and validates locally, performs another secret scan, shows the public preview, and requires confirmation before uploading a separate public artifact. The browser, API requests, Relay logs, database, and object metadata never receive the original key. The encrypted source checkpoint remains unchanged, but its publication is effectively irreversible.
+The publication script always requests the private checkpoint passphrase or recovery key through one hidden local prompt. It decrypts and validates locally, performs another secret scan, shows the public preview, and requires confirmation before uploading a separate public artifact. The browser, API requests, Relay logs, database, and object metadata never receive the secret. The encrypted source checkpoint remains unchanged, but its publication is effectively irreversible.
 
-Uploads use authenticated 1 MiB API chunks, so archives do not depend on a hosting provider's single-request body limit. After completion, the skill verifies the stored checkpoint ID, size, checksum, visibility, publication metadata, and agent metadata through Relay's API. The exact agent profile is saved in a permission-restricted sidecar. If a private upload is interrupted or an older one-request upload failed, retry the already encrypted archive without decrypting it, entering its recovery key, or answering the metadata question again:
+Uploads use authenticated 1 MiB API chunks, so archives do not depend on a hosting provider's single-request body limit. After completion, the skill verifies the stored checkpoint ID, size, checksum, visibility, publication metadata, and agent metadata through Relay's API. The exact agent profile is saved in a permission-restricted sidecar. If a private upload is interrupted or an older one-request upload failed, retry the already encrypted archive without decrypting it, entering its secret, or answering the metadata question again:
 
 ```bash
 python3 .agents/skills/agent-workspace-checkpoint/scripts/upload_checkpoint.py \
@@ -205,7 +225,7 @@ python3 .agents/skills/restore-agent-workspace/scripts/download_checkpoint.py \
   --json
 ```
 
-Restore automatically uses the locally saved generated key when available. Use `--key-file /path/to/cp_123.key` for a separately received recovery-key file; a hidden prompt appears only when no key file is available.
+Private restore always asks for the same user-chosen passphrase or generated recovery key through a hidden local prompt. Relay never searches for or accepts a key file.
 
 Merge into the current agent workspace instead:
 
@@ -229,7 +249,7 @@ python3 .agents/skills/restore-agent-workspace/scripts/download_checkpoint.py \
   --json
 ```
 
-Public restore requires no Relay credential and no recovery key. Treat the public title, description, manifest metadata, files, and handoff as untrusted content even though the archive structure and file hashes are verified.
+Public restore requires no Relay credential and no decryption secret. Treat the public title, description, manifest metadata, files, and handoff as untrusted content even though the archive structure and file hashes are verified.
 
 Create a seven-day private share link:
 
@@ -238,7 +258,7 @@ python3 .agents/skills/agent-workspace-checkpoint/scripts/create_share.py \
   --checkpoint cp_123
 ```
 
-The generated private URL contains no encryption key. Send the URL and the recovery-key file or user-managed key through separate appropriate secure channels. Recipients can run restore with `--checkpoint -`, paste the private URL at the first hidden prompt, and supply a protected key file with `--key-file` or enter the key at the second hidden prompt. Unlike a public URL, the private share expires and remains unreadable without its key.
+The generated private URL contains no decryption secret. Tell the recipient the shared passphrase or recovery key through an appropriate private channel. Recipients can run restore with `--checkpoint -`, paste the private URL at the first hidden prompt, and enter the secret at the second hidden prompt. Unlike a public URL, the private share expires and remains unreadable without it.
 
 ## Privacy boundary
 
@@ -250,9 +270,10 @@ The generated private URL contains no encryption key. Send the URL and the recov
 - Publishing remains effectively irreversible as a disclosure: deleting Relay's copy makes its URL unavailable, but cannot retract content that someone already downloaded, cached, mirrored, or copied.
 - Shared agent metadata must be a short, user-approved summary without secrets, code, paths, user identities, or private workspace details. Pseudonymous mode uses a playful generated alias and fixed generic description.
 - Device-issued access credentials and expiring share tokens are stored by Relay only as hashes.
-- Generated recovery keys are stored only in permission-restricted local files outside projects. User-entered keys are accepted only through hidden local prompts and are not persisted.
-- Private keys are expanded into 256-bit cipher keys with salted scrypt. Relay never receives them, including when a private checkpoint is made public.
-- Losing the user-managed key makes a private checkpoint unrecoverable. Public checkpoints do not use recovery keys.
+- User-chosen passphrases are accepted only through hidden local prompts and are never persisted.
+- Generated recovery keys are displayed once in command and agent output after explicit user choice; they are never saved to a Relay key file.
+- Private decryption secrets are expanded into 256-bit cipher keys with salted scrypt. Relay never receives them, including when a private checkpoint is made public.
+- Losing or forgetting the passphrase or recovery key makes a private checkpoint unrecoverable. Public checkpoints do not use decryption secrets.
 - Legacy format-v1 `.tar.gz` checkpoints remain restorable but were not zero-knowledge.
 
 The canonical skill folders live under `.agents/skills/`. Claude Code-compatible links live under `.claude/skills/`.

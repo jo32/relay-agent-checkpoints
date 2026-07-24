@@ -39,11 +39,11 @@ async function readSecret() {
   for await (const chunk of process.stdin) chunks.push(chunk);
   const encoded = Buffer.concat(chunks).toString("utf8").trim();
   if (!/^[A-Za-z0-9_-]+$/.test(encoded)) {
-    throw new Error("Checkpoint encryption key transport is invalid.");
+    throw new Error("Checkpoint passphrase transport is invalid.");
   }
   const secret = Buffer.from(encoded, "base64url");
   if (secret.length === 0 || secret.toString("base64url") !== encoded) {
-    throw new Error("Checkpoint encryption key transport is invalid.");
+    throw new Error("Checkpoint passphrase transport is invalid.");
   }
   return secret;
 }
@@ -68,7 +68,7 @@ function decodeLegacyKey(secret) {
   }
   const key = Buffer.from(encoded, "base64url");
   if (key.length !== KEY_BYTES) {
-    throw new Error("Checkpoint encryption key is invalid.");
+    throw new Error("Legacy checkpoint recovery key is invalid.");
   }
   return key;
 }
@@ -236,7 +236,7 @@ async function decrypt(input, output) {
     );
   } catch {
     await rm(output, { force: true });
-    throw new Error("Checkpoint authentication failed. The key is wrong or the file was changed.");
+    throw new Error("Checkpoint authentication failed. The passphrase or recovery key is wrong, or the file was changed.");
   }
 }
 

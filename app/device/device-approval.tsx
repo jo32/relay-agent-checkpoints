@@ -66,7 +66,7 @@ export default function DeviceApproval({
       </div>
       <p className="device-scope">
         This permits private checkpoint upload, download, and expiring share-link
-        creation. It never grants access to your local encryption key.
+        creation. It never grants access to your checkpoint decryption secret.
         {canPublish && (
           <>
             {" "}It also permits creating permanent public checkpoints and making

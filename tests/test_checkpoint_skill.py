@@ -52,14 +52,14 @@ class CheckpointSkillTests(unittest.TestCase):
         if (
             script == CREATE
             and input_text is not None
-            and "--generate-key" not in script_args
-            and "--prompt-key" not in script_args
             and not (
                 "--visibility" in script_args
                 and script_args[script_args.index("--visibility") + 1] == "public"
             )
         ):
-            script_args.insert(0, "--prompt-key")
+            input_lines = input_text.splitlines(keepends=True)
+            if len(input_lines) == 1:
+                input_text = input_lines[0] + input_lines[0]
         return subprocess.run(
             [sys.executable, str(script), *script_args],
             check=check,
@@ -145,7 +145,7 @@ class CheckpointSkillTests(unittest.TestCase):
             self.assertFalse((restored / ".env").exists())
             self.assertFalse((restored / "leaked.txt").exists())
 
-    def test_create_generates_saved_key_without_terminal_input(self):
+    def test_private_create_uses_confirmed_passphrase_without_storing_it(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
             project = base / "project"
@@ -153,7 +153,7 @@ class CheckpointSkillTests(unittest.TestCase):
             restored = base / "restored"
             key_directory = base / "keys"
             project.mkdir()
-            (project / "README.md").write_text("generated key checkpoint")
+            (project / "README.md").write_text("passphrase checkpoint")
             environment = {"RELAY_KEYS_DIR": str(key_directory)}
 
             created = json.loads(
@@ -164,20 +164,21 @@ class CheckpointSkillTests(unittest.TestCase):
                     "--output-dir",
                     str(output),
                     "--json",
+                    input_text=f"{CHECKPOINT_KEY}\n",
                     env=environment,
                 ).stdout
             )
-            key_file = Path(created["keyFile"])
-            generated_key = key_file.read_text(encoding="utf-8").strip()
-            self.assertTrue(created["keyGenerated"])
-            self.assertTrue(created["keyStored"])
-            self.assertEqual(key_file.parent, key_directory.resolve())
-            self.assertEqual(len(generated_key), 43)
-            self.assertNotIn(generated_key, json.dumps(created))
-            self.assertNotIn(generated_key.encode(), Path(created["archive"]).read_bytes())
-            if os.name != "nt":
-                self.assertEqual(key_directory.stat().st_mode & 0o777, 0o700)
-                self.assertEqual(key_file.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(created["secretMode"], "passphrase")
+            self.assertFalse(created["secretStored"])
+            self.assertIsNone(created["recoveryKey"])
+            self.assertNotIn("keyFile", created)
+            self.assertNotIn("keyGenerated", created)
+            self.assertNotIn(CHECKPOINT_KEY, json.dumps(created))
+            self.assertNotIn(
+                CHECKPOINT_KEY.encode(),
+                Path(created["archive"]).read_bytes(),
+            )
+            self.assertFalse(key_directory.exists())
 
             inspected = json.loads(
                 self.run_script(
@@ -185,11 +186,12 @@ class CheckpointSkillTests(unittest.TestCase):
                     "--verify",
                     "--json",
                     created["archive"],
+                    input_text=f"{CHECKPOINT_KEY}\n",
                     env=environment,
                 ).stdout
             )
-            self.assertTrue(inspected["keyStored"])
-            self.assertEqual(inspected["keyFile"], str(key_file))
+            self.assertTrue(inspected["decryptionSecretRequired"])
+            self.assertFalse(inspected["secretStored"])
             with archive_server(Path(created["archive"])) as url:
                 restored_result = json.loads(
                     self.run_script(
@@ -200,11 +202,92 @@ class CheckpointSkillTests(unittest.TestCase):
                         str(restored),
                         "--new-workspace",
                         "--json",
+                        input_text=f"{CHECKPOINT_KEY}\n",
                         env=environment,
                     ).stdout
                 )
-            self.assertTrue(restored_result["keyStored"])
-            self.assertEqual((restored / "README.md").read_text(), "generated key checkpoint")
+            self.assertTrue(restored_result["decryptionSecretRequired"])
+            self.assertFalse(restored_result["secretStored"])
+            self.assertEqual(
+                (restored / "README.md").read_text(),
+                "passphrase checkpoint",
+            )
+            self.assertFalse(key_directory.exists())
+
+    def test_private_create_can_display_generated_recovery_key_once(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            restored = base / "restored"
+            project.mkdir()
+            (project / "README.md").write_text("generated recovery key")
+
+            created = json.loads(
+                self.run_script(
+                    CREATE,
+                    "--root",
+                    str(project),
+                    "--output-dir",
+                    str(base / "out"),
+                    "--generate-key",
+                    "--json",
+                ).stdout
+            )
+            recovery_key = created["recoveryKey"]
+            self.assertEqual(created["secretMode"], "generated-recovery-key")
+            self.assertFalse(created["secretStored"])
+            self.assertRegex(recovery_key, r"^[A-Za-z0-9_-]{43}$")
+            self.assertEqual(
+                json.dumps(created).count(recovery_key),
+                1,
+            )
+            self.assertNotIn(
+                recovery_key.encode(),
+                Path(created["archive"]).read_bytes(),
+            )
+
+            with archive_server(Path(created["archive"])) as url:
+                restored_result = json.loads(
+                    self.run_script(
+                        RESTORE,
+                        "--checkpoint",
+                        url,
+                        "--destination",
+                        str(restored),
+                        "--new-workspace",
+                        "--json",
+                        input_text=f"{recovery_key}\n",
+                    ).stdout
+                )
+            self.assertTrue(restored_result["decryptionSecretRequired"])
+            self.assertFalse(restored_result["secretStored"])
+            self.assertEqual(
+                (restored / "README.md").read_text(),
+                "generated recovery key",
+            )
+
+    def test_private_create_rejects_mismatched_passphrase_confirmation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            output = base / "out"
+            project.mkdir()
+            (project / "README.md").write_text("passphrase confirmation")
+
+            result = self.run_script(
+                CREATE,
+                "--root",
+                str(project),
+                "--output-dir",
+                str(output),
+                "--json",
+                input_text=f"{CHECKPOINT_KEY}\n{OTHER_KEY}\n",
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("passphrases do not match", result.stderr)
+            self.assertFalse(output.exists() and any(output.iterdir()))
 
     def test_create_defaults_to_playful_pseudonymous_agent_metadata(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -324,10 +407,9 @@ class CheckpointSkillTests(unittest.TestCase):
             self.assertFalse(created["encrypted"])
             self.assertEqual(created["encryptionVersion"], 0)
             self.assertEqual(created["cipher"], "none")
-            self.assertIsNone(created["keyMode"])
-            self.assertFalse(created["keyGenerated"])
-            self.assertFalse(created["keyStored"])
-            self.assertIsNone(created["keyFile"])
+            self.assertIsNone(created["secretMode"])
+            self.assertFalse(created["secretStored"])
+            self.assertIsNone(created["recoveryKey"])
             self.assertTrue(archive_path.name.endswith(".relay-public.tar.gz"))
             self.assertFalse(key_dir.exists())
             self.assertFalse(archive_path.read_bytes().startswith(b"RELAYCP2\n"))
@@ -375,7 +457,8 @@ class CheckpointSkillTests(unittest.TestCase):
             self.assertEqual(restored["visibility"], "public")
             self.assertEqual(restored["encryptionVersion"], 0)
             self.assertFalse(restored["encrypted"])
-            self.assertFalse(restored["keyStored"])
+            self.assertFalse(restored["decryptionSecretRequired"])
+            self.assertFalse(restored["secretStored"])
             self.assertEqual(restored["publication"], publication)
             self.assertEqual(
                 (base / "restored" / "README.md").read_text(encoding="utf-8"),
@@ -450,7 +533,7 @@ class CheckpointSkillTests(unittest.TestCase):
                 missing_metadata.stderr,
             )
 
-            key_option = self.run_script(
+            removed_key_option = self.run_script(
                 CREATE,
                 "--root",
                 str(project),
@@ -465,8 +548,32 @@ class CheckpointSkillTests(unittest.TestCase):
                 "--json",
                 check=False,
             )
-            self.assertNotEqual(key_option.returncode, 0)
-            self.assertIn("Public checkpoints do not use", key_option.stderr)
+            self.assertNotEqual(removed_key_option.returncode, 0)
+            self.assertIn(
+                "unrecognized arguments: --prompt-key",
+                removed_key_option.stderr,
+            )
+
+            generated_key = self.run_script(
+                CREATE,
+                "--root",
+                str(project),
+                "--visibility",
+                "public",
+                "--public-title",
+                "Public example",
+                "--public-description",
+                "Reviewed public workspace.",
+                "--generate-key",
+                "--dry-run",
+                "--json",
+                check=False,
+            )
+            self.assertNotEqual(generated_key.returncode, 0)
+            self.assertIn(
+                "Public checkpoints do not use --generate-key",
+                generated_key.stderr,
+            )
 
             preview = json.loads(
                 self.run_script(
@@ -751,7 +858,7 @@ class CheckpointSkillTests(unittest.TestCase):
             )
             self.assertEqual(inspected["errors"], [])
 
-    def test_create_rejects_key_shorter_than_eight_characters(self):
+    def test_create_rejects_passphrase_shorter_than_eight_characters(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
             project = base / "project"
@@ -772,7 +879,7 @@ class CheckpointSkillTests(unittest.TestCase):
             self.assertIn("at least 8 characters", result.stderr)
             self.assertFalse(output.exists() and any(output.iterdir()))
 
-    def test_create_accepts_user_key_once_without_confirmation(self):
+    def test_create_requires_passphrase_confirmation(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
             project = base / "project"
@@ -790,7 +897,7 @@ class CheckpointSkillTests(unittest.TestCase):
             )
             payload = json.loads(result.stdout)
             self.assertTrue(Path(payload["archive"]).is_file())
-            self.assertNotIn("Confirm checkpoint encryption key", result.stderr)
+            self.assertIn("Confirm checkpoint passphrase", result.stderr)
 
     def test_preserves_tracked_temporary_named_file(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1144,7 +1251,7 @@ fs.writeFileSync(output, Buffer.concat([
                 )
             restored_result = json.loads(result.stdout)
             self.assertNotIn("#relay-key", restored_result["downloadUrl"])
-            self.assertFalse(restored_result["keyStored"])
+            self.assertFalse(restored_result["secretStored"])
             self.assertEqual(
                 (restored / "README.md").read_text(),
                 "portable encrypted content",
@@ -1320,9 +1427,9 @@ fs.writeFileSync(output, Buffer.concat([
                 for request in requests
                 if request["method"] == "PUT"
             ))
-            self.assertFalse(payload["keyStored"])
+            self.assertFalse(payload["secretStored"])
 
-    def test_publish_private_checkpoint_uses_recovery_key_only_locally(self):
+    def test_publish_private_checkpoint_uses_passphrase_only_locally(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
             project = base / "project"
@@ -1342,9 +1449,6 @@ fs.writeFileSync(output, Buffer.concat([
                     input_text=f"{CHECKPOINT_KEY}\n",
                 ).stdout
             )
-            key_file = base / "checkpoint.key"
-            key_file.write_text(CHECKPOINT_KEY + "\n", encoding="utf-8")
-            key_file.chmod(0o600)
             token = "rly_" + "e" * 64
             title = "Reviewed public handoff"
             description = "A sanitized workspace published for keyless restore."
@@ -1367,11 +1471,10 @@ fs.writeFileSync(output, Buffer.concat([
                     api_url,
                     "--api-token",
                     token,
-                    "--key-file",
-                    str(key_file),
                     "--yes",
                     "--json",
                     check=False,
+                    input_text=f"{CHECKPOINT_KEY}\n",
                 )
             self.assertEqual(
                 publication_process.returncode,
@@ -1389,8 +1492,8 @@ fs.writeFileSync(output, Buffer.concat([
                 published["sourceCiphertextChecksum"],
                 created["archiveSha256"],
             )
-            self.assertTrue(published["keyStored"])
-            self.assertFalse(published["keySentToRelay"])
+            self.assertFalse(published["secretStored"])
+            self.assertFalse(published["secretSentToRelay"])
             self.assertEqual(
                 published["marketplaceUrl"],
                 (
@@ -1472,9 +1575,6 @@ fs.writeFileSync(output, Buffer.concat([
                     request["body"],
                 )
 
-            wrong_key_file = base / "wrong.key"
-            wrong_key_file.write_text(OTHER_KEY + "\n", encoding="utf-8")
-            wrong_key_file.chmod(0o600)
             with publication_server(
                 Path(created["archive"]),
                 expected_token=token,
@@ -1492,11 +1592,10 @@ fs.writeFileSync(output, Buffer.concat([
                     api_url,
                     "--api-token",
                     token,
-                    "--key-file",
-                    str(wrong_key_file),
                     "--yes",
                     "--json",
                     check=False,
+                    input_text=f"{OTHER_KEY}\n",
                 )
             self.assertNotEqual(failed.returncode, 0)
             self.assertIn("authentication failed", failed.stderr.lower())
@@ -1505,7 +1604,7 @@ fs.writeFileSync(output, Buffer.concat([
                 ["GET"],
             )
 
-    def test_publish_blocks_literal_recovery_key_before_upload(self):
+    def test_publish_blocks_literal_passphrase_before_upload(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
             project = base / "project"
@@ -1525,9 +1624,6 @@ fs.writeFileSync(output, Buffer.concat([
                     input_text=f"{CHECKPOINT_KEY}\n",
                 ).stdout
             )
-            key_file = base / "checkpoint.key"
-            key_file.write_text(CHECKPOINT_KEY + "\n", encoding="utf-8")
-            key_file.chmod(0o600)
             token = "rly_" + "f" * 64
 
             with publication_server(
@@ -1547,15 +1643,14 @@ fs.writeFileSync(output, Buffer.concat([
                     api_url,
                     "--api-token",
                     token,
-                    "--key-file",
-                    str(key_file),
                     "--yes",
                     "--json",
                     check=False,
+                    input_text=f"{CHECKPOINT_KEY}\n",
                 )
 
             self.assertNotEqual(blocked.returncode, 0)
-            self.assertIn("recovery key", blocked.stderr.lower())
+            self.assertIn("passphrase", blocked.stderr.lower())
             self.assertNotIn(CHECKPOINT_KEY, blocked.stdout)
             self.assertNotIn(CHECKPOINT_KEY, blocked.stderr)
             self.assertEqual(
@@ -1583,9 +1678,6 @@ fs.writeFileSync(output, Buffer.concat([
                     input_text=f"{CHECKPOINT_KEY}\n",
                 ).stdout
             )
-            key_file = base / "checkpoint.key"
-            key_file.write_text(CHECKPOINT_KEY + "\n", encoding="utf-8")
-            key_file.chmod(0o600)
             token = "rly_" + "1" * 64
 
             with publication_server(
@@ -1605,9 +1697,7 @@ fs.writeFileSync(output, Buffer.concat([
                     api_url,
                     "--api-token",
                     token,
-                    "--key-file",
-                    str(key_file),
-                    input_text="publish\n",
+                    input_text=f"{CHECKPOINT_KEY}\npublish\n",
                 )
 
             self.assertIn("Files becoming readable (1):", published.stdout)
@@ -1667,9 +1757,6 @@ fs.writeFileSync(output, Buffer.concat([
                 checkpoint_id,
                 CHECKPOINT_KEY.encode("utf-8"),
             )
-            key_file = base / "checkpoint.key"
-            key_file.write_text(CHECKPOINT_KEY + "\n", encoding="utf-8")
-            key_file.chmod(0o600)
             token = "rly_" + "3" * 64
 
             with publication_server(
@@ -1689,10 +1776,9 @@ fs.writeFileSync(output, Buffer.concat([
                     api_url,
                     "--api-token",
                     token,
-                    "--key-file",
-                    str(key_file),
                     "--yes",
                     check=False,
+                    input_text=f"{CHECKPOINT_KEY}\n",
                 )
 
             self.assertNotEqual(blocked.returncode, 0)
@@ -1736,7 +1822,7 @@ fs.writeFileSync(output, Buffer.concat([
                 )
             put_requests = [item for item in requests if item["method"] == "PUT"]
             self.assertTrue(retried["uploaded"])
-            self.assertFalse(retried["keyRequired"])
+            self.assertFalse(retried["decryptionSecretRequired"])
             self.assertEqual(retried["agent"], created["agent"])
             retry_initialized = json.loads(requests[0]["body"])
             self.assertEqual(
@@ -1790,17 +1876,11 @@ fs.writeFileSync(output, Buffer.concat([
             self.assertEqual(requests[0]["body"], b"")
             self.assertNotIn(CHECKPOINT_KEY, str(requests[0]))
 
-    def test_delete_checkpoint_requires_exact_id_and_can_remove_saved_key(self):
+    def test_delete_checkpoint_requires_exact_id(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
             token = "rly_" + "e" * 64
             checkpoint_id = "cp_delete_example"
-            keys = base / "keys"
-            keys.mkdir()
-            key_path = keys / f"{checkpoint_id}.key"
-            key_path.write_text("locally saved secret key\n", encoding="utf-8")
-            environment = {"RELAY_KEYS_DIR": str(keys)}
-
             with deletion_server(
                 token,
                 checkpoint_id,
@@ -1816,7 +1896,6 @@ fs.writeFileSync(output, Buffer.concat([
                     token,
                     check=False,
                     input_text="wrong-checkpoint\n",
-                    env=environment,
                 )
                 self.assertNotEqual(cancelled.returncode, 0)
                 self.assertIn("cancelled", cancelled.stderr)
@@ -1830,18 +1909,15 @@ fs.writeFileSync(output, Buffer.concat([
                     api_url,
                     "--api-token",
                     token,
-                    "--delete-local-key",
                     "--json",
                     input_text=f"{checkpoint_id}\n",
-                    env=environment,
                 )
 
             payload = json.loads(deleted.stdout)
             self.assertTrue(payload["deleted"])
             self.assertEqual(payload["visibility"], "public")
-            self.assertTrue(payload["localKey"]["removed"])
+            self.assertNotIn("localKey", payload)
             self.assertFalse(payload["localArchivesRemoved"])
-            self.assertFalse(key_path.exists())
             self.assertEqual(
                 [request["method"] for request in requests],
                 ["GET", "GET", "DELETE"],

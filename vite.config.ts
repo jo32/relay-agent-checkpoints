@@ -1,5 +1,5 @@
 import vinext from "vinext";
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 
 const RELAY_DATABASE_ID = "8621bc6b-2324-495e-97f3-3b72f2e4f1af";
 
@@ -23,7 +23,7 @@ const localBindingConfig = {
   ],
 };
 
-export default defineConfig(async ({ command }) => {
+export default defineConfig(async ({ command, mode }) => {
   // Keep Wrangler and Miniflare state project-local. These are non-secret tool
   // settings; application environment belongs in ignored `.env*` files.
   process.env.WRANGLER_WRITE_LOGS ??= "false";
@@ -32,6 +32,8 @@ export default defineConfig(async ({ command }) => {
 
   // Wrangler snapshots its log path while the Cloudflare plugin is imported.
   const { cloudflare } = await import("@cloudflare/vite-plugin");
+  const localEnvironment =
+    command === "serve" ? loadEnv(mode, process.cwd(), "") : {};
 
   return {
     server: isCodexSeatbeltSandbox
@@ -49,7 +51,7 @@ export default defineConfig(async ({ command }) => {
           ? {
               config: {
                 ...localBindingConfig,
-                vars: localWorkerVars(),
+                vars: localWorkerVars(localEnvironment),
               },
             }
           : {}),
@@ -58,18 +60,22 @@ export default defineConfig(async ({ command }) => {
   };
 });
 
-function localWorkerVars(): Record<string, string> {
+function localWorkerVars(
+  localEnvironment: Record<string, string>,
+): Record<string, string> {
   const keys = [
     "BETTER_AUTH_URL",
     "BETTER_AUTH_SECRET",
     "GITHUB_CLIENT_ID",
     "GITHUB_CLIENT_SECRET",
     "RELAY_LOCAL_PREVIEW",
+    "VIBELOFT_PRODUCT_ID",
+    "VIBELOFT_WEB_AUTH_KEY",
   ] as const;
 
   return Object.fromEntries(
     keys.flatMap((key) => {
-      const value = process.env[key];
+      const value = process.env[key] ?? localEnvironment[key];
       return value ? [[key, value]] : [];
     }),
   );

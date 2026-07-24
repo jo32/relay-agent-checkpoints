@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
+import { getVibeLoftTelemetryConfig } from "../lib/runtime";
 import "./globals.css";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -50,8 +51,20 @@ export async function generateMetadata(): Promise<Metadata> {
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  const vibeLoft = getVibeLoftTelemetryConfig();
+
   return (
     <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
+      {vibeLoft ? (
+        <head>
+          <script
+            defer
+            src="https://vibeloft.ai/telemetry/v1.js"
+            data-vl-product-id={vibeLoft.productId}
+            data-vl-auth-key={vibeLoft.authKey}
+          />
+        </head>
+      ) : null}
       <body className={GeistSans.className}>{children}</body>
     </html>
   );

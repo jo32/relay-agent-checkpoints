@@ -65,7 +65,11 @@ class SkillBundleTests(unittest.TestCase):
         self.assertIn("/api/agent/status", create_skill)
         self.assertIn("uploads in chunks", create_skill)
         self.assertIn("upload_checkpoint.py", create_skill)
-        self.assertIn("enters the key once", create_skill)
+        self.assertIn("entered twice only during creation", create_skill)
+        self.assertIn("never store, remember, recover, or synchronize", create_skill)
+        self.assertIn("--generate-key", create_skill)
+        self.assertIn("displayed once in the command output", create_skill)
+        self.assertNotIn("--key-file", create_skill)
         self.assertIn("playful pseudonym", create_skill)
         self.assertIn("one-sentence description", create_skill)
         self.assertIn("Agent metadata is intentionally visible", create_skill)
@@ -78,6 +82,11 @@ class SkillBundleTests(unittest.TestCase):
         self.assertIn("--merge", restore_skill)
         self.assertIn("--new-workspace", restore_skill)
         self.assertIn("untrusted instructions", restore_skill)
+        self.assertIn(
+            "always requests the checkpoint's passphrase or recovery key",
+            restore_skill,
+        )
+        self.assertNotIn("--key-file", restore_skill)
 
         self.assertTrue((SKILL_ROOTS[0] / "scripts" / "agent_metadata.py").is_file())
         self.assertTrue((SKILL_ROOTS[0] / "scripts" / "relay_upload.py").is_file())

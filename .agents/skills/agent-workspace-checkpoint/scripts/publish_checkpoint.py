@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish a private Relay checkpoint without sending its recovery key."""
+"""Publish a private Relay checkpoint without sending its decryption secret."""
 
 from __future__ import annotations
 
@@ -22,10 +22,8 @@ from public_checkpoint import (
 from relay_credentials import RelayCredentialError, load_access_token
 from relay_crypto import (
     RelayCryptoError,
-    checkpoint_key_path,
     decrypt_checkpoint,
-    load_checkpoint_key,
-    prompt_checkpoint_key,
+    prompt_checkpoint_secret,
     read_encrypted_header,
 )
 from relay_upload import RelayUploadError, upload_checkpoint
@@ -42,11 +40,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--public-description", required=True)
     parser.add_argument("--api-url", default=os.environ.get("RELAY_API_URL"))
     parser.add_argument("--api-token", default=os.environ.get("RELAY_API_TOKEN"))
-    parser.add_argument(
-        "--key-file",
-        type=Path,
-        help="Permission-restricted recovery key file; otherwise use the saved key or prompt",
-    )
     parser.add_argument(
         "--yes",
         action="store_true",
@@ -94,21 +87,11 @@ def main() -> int:
                 raise RelayCryptoError(
                     "Encrypted checkpoint ID does not match the request"
                 )
-            candidate = (
-                args.key_file.expanduser()
-                if args.key_file
-                else checkpoint_key_path(checkpoint_id)
-            )
-            used_key_file: Path | None = None
-            if args.key_file or candidate.exists():
-                key = load_checkpoint_key(candidate)
-                used_key_file = candidate.resolve()
-            else:
-                key = prompt_checkpoint_key()
+            secret = prompt_checkpoint_secret()
             decrypt_checkpoint(
                 encrypted_path,
                 plaintext_path,
-                key,
+                secret,
                 checkpoint_id,
             )
             public_result = canonicalize_public_archive(
@@ -117,7 +100,7 @@ def main() -> int:
                 checkpoint_id=checkpoint_id,
                 title=metadata["title"],
                 description=metadata["description"],
-                forbidden_secrets=(key,),
+                forbidden_secrets=(secret,),
             )
         except (RelayCryptoError, PublicCheckpointError) as error:
             raise SystemExit(str(error)) from error
@@ -170,9 +153,8 @@ def main() -> int:
             "publicManifestMetadata": public_result["manifestMetadata"],
             "treeHash": public_result["treeHash"],
             "sourceCiphertextChecksum": source["checksum"],
-            "keyStored": used_key_file is not None,
-            "keyFile": str(used_key_file) if used_key_file else None,
-            "keySentToRelay": False,
+            "secretStored": False,
+            "secretSentToRelay": False,
             "publicUrl": (
                 f"{args.api_url.rstrip('/')}/api/public/checkpoints/"
                 f"{urllib.parse.quote(checkpoint_id, safe='')}/download"
@@ -188,7 +170,9 @@ def main() -> int:
         print(f"Public title: {metadata['title']}")
         print(f"Public URL: {result['publicUrl']}")
         print(f"Marketplace: {result['marketplaceUrl']}")
-        print("Recovery key: used locally and never sent to Relay.")
+        print(
+            "Passphrase or recovery key: entered locally and never sent to Relay."
+        )
     return 0
 
 

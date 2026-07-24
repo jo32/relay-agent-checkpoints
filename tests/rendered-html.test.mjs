@@ -22,6 +22,8 @@ before(async () => {
       GITHUB_CLIENT_ID: "relay-rendered-html-test-client",
       GITHUB_CLIENT_SECRET: "relay-rendered-html-test-client-secret",
       RELAY_LOCAL_PREVIEW: "true",
+      VIBELOFT_PRODUCT_ID: "relay-vibeloft-test-product",
+      VIBELOFT_WEB_AUTH_KEY: "relay-vibeloft-test-auth-key",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -267,6 +269,9 @@ test("server-renders the Relay product shell", async () => {
   assert.doesNotMatch(html, /Agent runners|Use runner|Start a handoff/);
   assert.doesNotMatch(html, /Keychain|Credential Locker|OS-held key|URL fragment/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
+  assert.match(html, /src="https:\/\/vibeloft\.ai\/telemetry\/v1\.js"/);
+  assert.match(html, /data-vl-product-id="[^"]+"/);
+  assert.match(html, /data-vl-auth-key="[^"]+"/);
 });
 
 test("includes accessible product landmarks", async () => {
@@ -384,7 +389,7 @@ test("leads with Relay's explicit private and public security boundary", async (
   assert.match(landingSource, /Private checkpoints are sealed locally/);
   assert.match(landingSource, /Public is intentionally readable/);
   assert.match(landingSource, /AES-256-GCM/);
-  assert.match(landingSource, /Recovery key stays local/);
+  assert.match(landingSource, /Secret is never sent to Relay/);
   assert.match(landingSource, /Restore with proof/);
   assert.match(landingSource, /Publication is effectively irreversible/);
   assert.doesNotMatch(landingSource, /Install without login|Sign in to upload|Login required/);

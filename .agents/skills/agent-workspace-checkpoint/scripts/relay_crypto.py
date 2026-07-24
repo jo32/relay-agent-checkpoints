@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import base64
 import getpass
+import hmac
 import json
-import os
 import re
 import secrets
 import shutil
@@ -16,7 +16,7 @@ from pathlib import Path
 MAGIC = b"RELAYCP2\n"
 MAX_HEADER_BYTES = 16 * 1024
 HELPER = Path(__file__).with_name("relay_crypto.mjs")
-MIN_KEY_CHARACTERS = 8
+MIN_PASSPHRASE_CHARACTERS = 8
 KDF_NAME = "scrypt"
 KDF_SALT_BYTES = 16
 KDF_N = 131_072
@@ -35,98 +35,41 @@ def encode_secret(secret: bytes) -> str:
     return base64.urlsafe_b64encode(secret).rstrip(b"=").decode("ascii")
 
 
-def validate_checkpoint_key(value: str) -> bytes:
-    if len(value) < MIN_KEY_CHARACTERS:
+def validate_checkpoint_passphrase(value: str) -> bytes:
+    if len(value) < MIN_PASSPHRASE_CHARACTERS:
         raise RelayCryptoError(
-            "Checkpoint encryption key must be at least 8 characters"
+            "Checkpoint passphrase must be at least 8 characters"
         )
     try:
         return value.encode("utf-8")
     except UnicodeEncodeError as error:
         raise RelayCryptoError(
-            "Checkpoint encryption key contains invalid Unicode"
+            "Checkpoint passphrase contains invalid Unicode"
         ) from error
 
 
-def read_checkpoint_key(prompt: str) -> bytes:
-    return validate_checkpoint_key(getpass.getpass(prompt))
+def read_checkpoint_passphrase(prompt: str) -> bytes:
+    return validate_checkpoint_passphrase(getpass.getpass(prompt))
 
 
-def prompt_checkpoint_key() -> bytes:
-    return read_checkpoint_key("Checkpoint encryption key (minimum 8 characters): ")
+def prompt_checkpoint_secret() -> bytes:
+    return read_checkpoint_passphrase(
+        "Checkpoint passphrase or recovery key (minimum 8 characters): "
+    )
 
 
-def generate_checkpoint_key() -> bytes:
+def prompt_new_checkpoint_passphrase() -> bytes:
+    passphrase = read_checkpoint_passphrase(
+        "Choose checkpoint passphrase (minimum 8 characters): "
+    )
+    confirmation = read_checkpoint_passphrase("Confirm checkpoint passphrase: ")
+    if not hmac.compare_digest(passphrase, confirmation):
+        raise RelayCryptoError("Checkpoint passphrases do not match")
+    return passphrase
+
+
+def generate_checkpoint_recovery_key() -> bytes:
     return encode_secret(secrets.token_bytes(32)).encode("ascii")
-
-
-def checkpoint_keys_directory() -> Path:
-    override = os.environ.get("RELAY_KEYS_DIR")
-    if override:
-        return Path(override).expanduser().resolve()
-    if os.name == "nt":
-        base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
-        return base / "Relay" / "checkpoint-keys"
-    base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-    return base / "relay" / "checkpoint-keys"
-
-
-def checkpoint_key_path(checkpoint_id: str) -> Path:
-    if not CHECKPOINT_ID_PATTERN.fullmatch(checkpoint_id):
-        raise RelayCryptoError("Checkpoint ID is invalid")
-    return checkpoint_keys_directory() / f"{checkpoint_id}.key"
-
-
-def save_checkpoint_key(checkpoint_id: str, key: bytes) -> Path:
-    try:
-        value = key.decode("utf-8")
-    except UnicodeDecodeError as error:
-        raise RelayCryptoError("Checkpoint encryption key is invalid") from error
-    validate_checkpoint_key(value)
-    path = checkpoint_key_path(checkpoint_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if os.name != "nt":
-        path.parent.chmod(0o700)
-    descriptor: int | None = None
-    try:
-        descriptor = os.open(
-            path,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-            0o600,
-        )
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            descriptor = None
-            handle.write(value + "\n")
-        if os.name != "nt":
-            path.chmod(0o600)
-    except FileExistsError as error:
-        raise RelayCryptoError(
-            "A recovery key already exists for this checkpoint"
-        ) from error
-    except OSError as error:
-        path.unlink(missing_ok=True)
-        raise RelayCryptoError("Unable to save the generated recovery key") from error
-    finally:
-        if descriptor is not None:
-            os.close(descriptor)
-    return path
-
-
-def load_checkpoint_key(path: Path) -> bytes:
-    key_path = path.expanduser()
-    if key_path.is_symlink() or not key_path.is_file():
-        raise RelayCryptoError("Checkpoint recovery key file is missing or unsafe")
-    if os.name != "nt" and key_path.stat().st_mode & 0o077:
-        raise RelayCryptoError(
-            "Checkpoint recovery key file permissions must be 0600"
-        )
-    try:
-        value = key_path.read_text(encoding="utf-8").rstrip("\r\n")
-    except (OSError, UnicodeDecodeError) as error:
-        raise RelayCryptoError("Checkpoint recovery key file is unreadable") from error
-    if "\n" in value or "\r" in value:
-        raise RelayCryptoError("Checkpoint recovery key file is invalid")
-    return validate_checkpoint_key(value)
 
 
 def is_encrypted_checkpoint(path: Path) -> bool:

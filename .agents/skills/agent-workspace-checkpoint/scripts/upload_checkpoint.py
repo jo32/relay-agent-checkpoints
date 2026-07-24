@@ -98,7 +98,7 @@ def main() -> int:
         "archiveSha256": checksum,
         "sizeBytes": archive.stat().st_size,
         "uploaded": True,
-        "keyRequired": False,
+        "decryptionSecretRequired": False,
         "agent": agent_metadata,
         "agentMetadataFile": str(metadata_sidecar),
         "relay": relay,
@@ -113,7 +113,7 @@ def main() -> int:
             f"Agent metadata: {agent_metadata['name']} "
             f"({agent_metadata['mode']}) — {agent_metadata['description']}"
         )
-        print("Encryption key: not required for upload retry.")
+        print("Passphrase: not required for upload retry.")
     return 0
 
 
