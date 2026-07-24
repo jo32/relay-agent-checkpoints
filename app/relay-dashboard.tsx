@@ -856,7 +856,10 @@ function CheckpointRow({
         <span className="entity-icon"><FileArchive size={17} /></span>
         <div>
           <strong>{checkpointTitle(checkpoint)}</strong>
-          <span className="mono"><GitBranch size={11} /> {checkpoint.id}</span>
+          <span className="mono" title={checkpoint.id}>
+            <GitBranch size={11} aria-hidden="true" />
+            <span>{checkpoint.id}</span>
+          </span>
         </div>
       </div>
       <div className="agent-cell">
