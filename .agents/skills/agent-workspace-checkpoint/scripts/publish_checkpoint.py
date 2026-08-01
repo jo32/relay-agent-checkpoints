@@ -145,6 +145,7 @@ def main() -> int:
                 raise SystemExit("Publication cancelled")
 
         try:
+            public_skill = public_result.get("skill")
             uploaded = upload_checkpoint(
                 archive_path=public_path,
                 api_url=args.api_url,
@@ -152,6 +153,19 @@ def main() -> int:
                 checkpoint_id=checkpoint_id,
                 checksum=str(public_result["checksum"]),
                 agent_metadata=None,
+                artifact_metadata={
+                    "artifactType": public_result["artifactType"],
+                    "skillName": (
+                        public_skill.get("name")
+                        if isinstance(public_skill, dict)
+                        else None
+                    ),
+                    "skillDescription": (
+                        public_skill.get("description")
+                        if isinstance(public_skill, dict)
+                        else None
+                    ),
+                },
                 operation="publish-existing",
                 public_metadata=metadata,
                 source_ciphertext_checksum=str(source["checksum"]),
@@ -162,6 +176,8 @@ def main() -> int:
         result = {
             "checkpointId": checkpoint_id,
             "visibility": "public",
+            "artifactType": public_result["artifactType"],
+            "skill": public_result["skill"],
             "publication": metadata,
             "publicFormatVersion": public_result["formatVersion"],
             "archiveSha256": public_result["checksum"],

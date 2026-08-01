@@ -1,5 +1,10 @@
 import type { AgentMetadataMode } from "./agent-metadata";
 import {
+  resolveArtifactMetadata,
+  type CheckpointArtifactMetadata,
+  type CheckpointArtifactType,
+} from "./artifact-metadata";
+import {
   MAX_PUBLIC_DESCRIPTION_CHARACTERS,
   MAX_PUBLIC_TITLE_CHARACTERS,
   PUBLIC_CHECKPOINT_FORMAT_VERSION,
@@ -20,6 +25,9 @@ export type ChunkRecord = {
 export type ChunkedCheckpointManifest = {
   version: 1;
   checkpointId: string;
+  artifactType?: CheckpointArtifactType;
+  skillName?: string | null;
+  skillDescription?: string | null;
   sizeBytes: number;
   chunks: ChunkRecord[];
 };
@@ -46,6 +54,10 @@ export type CheckpointUploadSession = {
   checksum: string;
   encryptionVersion: 0 | 2;
   cipher: "none" | "AES-256-GCM";
+  /** Missing fields identify upload sessions created before skill support. */
+  artifactType?: CheckpointArtifactType;
+  skillName?: string | null;
+  skillDescription?: string | null;
   agentName: string;
   agentDescription: string;
   agentMetadataMode: AgentMetadataMode;
@@ -208,6 +220,16 @@ export function checkpointUploadOperation(
   return session.operation ?? "create-private";
 }
 
+export function checkpointArtifactMetadata(
+  session: CheckpointUploadSession,
+): CheckpointArtifactMetadata {
+  return resolveArtifactMetadata({
+    artifactType: session.artifactType,
+    skillName: session.skillName,
+    skillDescription: session.skillDescription,
+  });
+}
+
 export function isPublicUploadSession(session: CheckpointUploadSession) {
   return checkpointUploadOperation(session) !== "create-private";
 }
@@ -296,6 +318,13 @@ function isUploadSession(
   uploadId: string,
 ): boolean {
   const operation = value?.operation ?? "create-private";
+  let validArtifactMetadata = false;
+  try {
+    checkpointArtifactMetadata(value);
+    validArtifactMetadata = true;
+  } catch {
+    validArtifactMetadata = false;
+  }
   const validPrivateFormat =
     operation === "create-private" &&
     value.encryptionVersion === 2 &&
@@ -331,6 +360,7 @@ function isUploadSession(
     typeof value.tenantId === "string" &&
     /^cp_[a-z0-9_-]{6,80}$/i.test(value.checkpointId) &&
     /^sha256:[a-f0-9]{64}$/i.test(value.checksum) &&
+    validArtifactMetadata &&
     (validPrivateFormat || validPublicFormat) &&
     typeof value.agentName === "string" &&
     value.agentName.length > 0 &&

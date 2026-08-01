@@ -16,6 +16,9 @@ export const checkpoints = sqliteTable(
     workspaceName: text("workspace_name").notNull(),
     label: text("label").notNull(),
     sourceAgent: text("source_agent").notNull(),
+    artifactType: text("artifact_type").notNull().default("agent"),
+    skillName: text("skill_name"),
+    skillDescription: text("skill_description"),
     agentName: text("agent_name").notNull().default("Mysterious Marmot"),
     agentDescription: text("agent_description")
       .notNull()
@@ -86,6 +89,9 @@ export const checkpointMarketplaceIndex = sqliteTable(
     agentName: text("agent_name").notNull(),
     agentDescription: text("agent_description").notNull(),
     agentMetadataMode: text("agent_metadata_mode").notNull(),
+    artifactType: text("artifact_type").notNull().default("agent"),
+    skillName: text("skill_name"),
+    skillDescription: text("skill_description"),
     searchText: text("search_text").notNull(),
     qualityScore: integer("quality_score").notNull().default(0),
     sizeBytes: integer("size_bytes").notNull(),
@@ -96,6 +102,10 @@ export const checkpointMarketplaceIndex = sqliteTable(
     index("checkpoint_marketplace_published_idx").on(table.publishedAt),
     index("checkpoint_marketplace_recommended_idx").on(
       table.qualityScore,
+      table.publishedAt,
+    ),
+    index("checkpoint_marketplace_artifact_idx").on(
+      table.artifactType,
       table.publishedAt,
     ),
   ],

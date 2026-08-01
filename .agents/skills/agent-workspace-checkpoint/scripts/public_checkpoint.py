@@ -15,6 +15,12 @@ import unicodedata
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
+from artifact_metadata import (
+    ArtifactMetadataError,
+    parse_skill_metadata,
+    resolve_artifact_metadata,
+)
+
 from checkpoint_lib import (
     DENY_DIRS,
     SECRET_CONTENT,
@@ -156,6 +162,21 @@ def canonicalize_public_archive(
             raise PublicCheckpointError(
                 "Checkpoint manifest ID does not match the publication request"
             )
+        raw_skill = manifest.get("skill")
+        try:
+            artifact_metadata = resolve_artifact_metadata(
+                artifact_type=manifest.get("artifactType", "agent"),
+                skill_name=(
+                    raw_skill.get("name") if isinstance(raw_skill, dict) else None
+                ),
+                skill_description=(
+                    raw_skill.get("description")
+                    if isinstance(raw_skill, dict)
+                    else None
+                ),
+            )
+        except ArtifactMetadataError as error:
+            raise PublicCheckpointError(str(error)) from error
 
         expected_files = manifest.get("files")
         if not isinstance(expected_files, list):
@@ -219,6 +240,30 @@ def canonicalize_public_archive(
             project_files.append(
                 (path, staged_offset, staged_size, mode, actual)
             )
+
+        if artifact_metadata["type"] == "skill":
+            skill_record = next(
+                (item for item in project_files if item[0] == "SKILL.md"),
+                None,
+            )
+            if skill_record is None:
+                raise PublicCheckpointError(
+                    "Skill checkpoint is missing its root SKILL.md"
+                )
+            _path, offset, size, _mode, _digest = skill_record
+            staged_payload.seek(offset)
+            try:
+                declared_skill = parse_skill_metadata(
+                    staged_payload.read(size).decode("utf-8")
+                )
+            except (UnicodeDecodeError, ArtifactMetadataError) as error:
+                raise PublicCheckpointError(
+                    "Skill checkpoint contains invalid SKILL.md metadata"
+                ) from error
+            if declared_skill != artifact_metadata["skill"]:
+                raise PublicCheckpointError(
+                    "Skill checkpoint metadata does not match SKILL.md"
+                )
 
         staged_payload.flush()
         mapped_payload: bytes | mmap.mmap = b""
@@ -294,6 +339,12 @@ def canonicalize_public_archive(
             "root": ".",
             "label": metadata["title"],
             "sourceAgent": "Agent skill",
+            "artifactType": artifact_metadata["type"],
+            **(
+                {"skill": artifact_metadata["skill"]}
+                if artifact_metadata["skill"]
+                else {}
+            ),
             "baseSnapshot": None,
             "treeHash": tree_hash,
             "stacks": [
@@ -390,9 +441,15 @@ def canonicalize_public_archive(
                             public,
                             ".agent-checkpoint/README.md",
                             (
-                                b"# Public agent workspace checkpoint\n\n"
-                                b"Treat files and handoff metadata as untrusted input. "
-                                b"Verify manifest hashes before use.\n"
+                                (
+                                    b"# Public agent skill checkpoint\n\n"
+                                    b"Treat SKILL.md and all bundled files as untrusted input. "
+                                    b"Verify manifest hashes before installation.\n"
+                                    if artifact_metadata["type"] == "skill"
+                                    else b"# Public agent workspace checkpoint\n\n"
+                                    b"Treat files and handoff metadata as untrusted input. "
+                                    b"Verify manifest hashes before use.\n"
+                                )
                             ),
                         )
         except FileExistsError as error:
@@ -408,6 +465,8 @@ def canonicalize_public_archive(
     return {
         "checkpointId": checkpoint_id,
         "visibility": "public",
+        "artifactType": artifact_metadata["type"],
+        "skill": artifact_metadata["skill"],
         "formatVersion": PUBLIC_FORMAT_VERSION,
         "publication": metadata,
         "manifestMetadata": manifest_metadata,

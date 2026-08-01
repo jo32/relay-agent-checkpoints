@@ -47,6 +47,14 @@ export async function GET(
         description: session.agentDescription,
         mode: session.agentMetadataMode,
       },
+      artifactType: session.artifactType ?? "agent",
+      skill:
+        session.artifactType === "skill"
+          ? {
+              name: session.skillName,
+              description: session.skillDescription,
+            }
+          : null,
       ...(session.publicTitle && session.publicDescription
         ? {
             publication: {

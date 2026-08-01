@@ -7,6 +7,7 @@ import {
 import { getCurrentPrincipal } from "../../../../../lib/principal";
 import { openCheckpointArchive } from "../../../../../lib/checkpoint-objects";
 import { agentMetadataHeaders } from "../../../../../lib/agent-metadata";
+import { artifactMetadataHeaders } from "../../../../../lib/artifact-metadata";
 import { PUBLIC_CHECKPOINT_CONTENT_TYPE } from "../../../../../lib/public-checkpoint";
 
 export const dynamic = "force-dynamic";
@@ -57,6 +58,7 @@ export async function GET(
       "x-checkpoint-id": checkpoint.id,
       "x-checkpoint-encryption": String(checkpoint.encryptionVersion),
       ...agentMetadataHeaders(checkpoint),
+      ...artifactMetadataHeaders(checkpoint),
       "cache-control": "private, no-store",
     },
   });

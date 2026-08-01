@@ -3,6 +3,7 @@ import {
   listMarketplaceCheckpoints,
   type MarketplaceSort,
 } from "@/db/checkpoints";
+import type { CheckpointArtifactType } from "@/lib/artifact-metadata";
 
 export const dynamic = "force-dynamic";
 
@@ -13,11 +14,17 @@ export async function GET(request: Request) {
     url.searchParams.get("sort") === "latest" ? "latest" : "recommended";
   const page = boundedInteger(url.searchParams.get("page"), 1, 10_000, 1);
   const pageSize = boundedInteger(url.searchParams.get("limit"), 1, 48, 24);
+  const artifactTypeInput = url.searchParams.get("type");
+  const artifactType: CheckpointArtifactType | undefined =
+    artifactTypeInput === "agent" || artifactTypeInput === "skill"
+      ? artifactTypeInput
+      : undefined;
 
   try {
     const listing = await listMarketplaceCheckpoints({
       query,
       sort,
+      artifactType,
       page,
       pageSize,
     });
@@ -28,6 +35,7 @@ export async function GET(request: Request) {
             await listMarketplaceCheckpoints({
               query,
               sort: "recommended",
+              artifactType,
               page: 1,
               pageSize: 3,
             })

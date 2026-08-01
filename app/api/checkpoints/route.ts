@@ -28,6 +28,10 @@ import {
   resolveAgentMetadata,
 } from "../../../lib/agent-metadata";
 import {
+  ArtifactMetadataError,
+  resolveArtifactMetadata,
+} from "../../../lib/artifact-metadata";
+import {
   hasGzipHeader,
   PUBLIC_CHECKPOINT_CONTENT_TYPE,
   PUBLIC_CHECKPOINT_FORMAT_VERSION,
@@ -166,14 +170,20 @@ async function storeDirectPrivateCheckpoint(
   credential: NonNullable<Awaited<ReturnType<typeof authenticateApiToken>>>,
 ) {
   let agentMetadata;
+  let artifactMetadata;
   try {
     agentMetadata = resolveAgentMetadata(id, {
       agentName: form.get("agentName"),
       agentDescription: form.get("agentDescription"),
       agentMetadataMode: form.get("agentMetadataMode"),
     });
+    artifactMetadata = resolveArtifactMetadata({
+      artifactType: form.get("artifactType"),
+      skillName: form.get("skillName"),
+      skillDescription: form.get("skillDescription"),
+    });
   } catch (error) {
-    return agentMetadataResponse(error);
+    return checkpointMetadataResponse(error);
   }
   if (
     archive.type !== "application/vnd.relay.checkpoint" ||
@@ -210,6 +220,7 @@ async function storeDirectPrivateCheckpoint(
     workspaceName: "Private workspace",
     label: "Encrypted checkpoint",
     sourceAgent: "Local checkpoint skill",
+    ...artifactMetadata,
     ...agentMetadata,
     status: "ready",
     createdAt,
@@ -294,21 +305,8 @@ async function storeDirectPublicCheckpoint(
   } catch (error) {
     return publicMetadataResponse(error);
   }
-  if (
-    !hasGzipHeader(bytes) ||
-    !(await validatePublicCheckpointArchive(archive.stream(), {
-      checkpointId: id,
-      title: publicMetadata.publicTitle,
-      description: publicMetadata.publicDescription,
-    }))
-  ) {
-    return NextResponse.json(
-      { error: "Public checkpoint is not a valid gzip/tar archive." },
-      { status: 400 },
-    );
-  }
-
   let agentMetadata;
+  let artifactMetadata;
   let sourceCiphertextChecksum: string | null = null;
   if (operation === "create-public") {
     try {
@@ -317,8 +315,13 @@ async function storeDirectPublicCheckpoint(
         agentDescription: form.get("agentDescription"),
         agentMetadataMode: form.get("agentMetadataMode"),
       });
+      artifactMetadata = resolveArtifactMetadata({
+        artifactType: form.get("artifactType"),
+        skillName: form.get("skillName"),
+        skillDescription: form.get("skillDescription"),
+      });
     } catch (error) {
-      return agentMetadataResponse(error);
+      return checkpointMetadataResponse(error);
     }
     if (await checkpointIdExists(id)) {
       return NextResponse.json({ error: "This checkpoint already exists." }, { status: 409 });
@@ -372,6 +375,28 @@ async function storeDirectPublicCheckpoint(
       agentDescription: source.agentDescription,
       agentMetadataMode: source.agentMetadataMode,
     };
+    artifactMetadata = {
+      artifactType: source.artifactType,
+      skillName: source.skillName,
+      skillDescription: source.skillDescription,
+    };
+  }
+
+  if (
+    !hasGzipHeader(bytes) ||
+    !(await validatePublicCheckpointArchive(archive.stream(), {
+      checkpointId: id,
+      title: publicMetadata.publicTitle,
+      description: publicMetadata.publicDescription,
+      artifactType: artifactMetadata.artifactType,
+      skillName: artifactMetadata.skillName,
+      skillDescription: artifactMetadata.skillDescription,
+    }))
+  ) {
+    return NextResponse.json(
+      { error: "Public checkpoint is not a valid gzip/tar archive." },
+      { status: 400 },
+    );
   }
 
   const objectKey = `public/objects/${crypto.randomUUID()}.tar.gz`;
@@ -416,6 +441,7 @@ async function storeDirectPublicCheckpoint(
           workspaceName: "Public workspace",
           label: publicMetadata.publicTitle,
           sourceAgent: "Local checkpoint skill",
+          ...artifactMetadata,
           ...agentMetadata,
           status: "ready",
           createdAt: publishedAt,
@@ -481,8 +507,8 @@ class PublicationConflictError extends Error {
   }
 }
 
-function agentMetadataResponse(error: unknown) {
-  if (error instanceof AgentMetadataError) {
+function checkpointMetadataResponse(error: unknown) {
+  if (error instanceof AgentMetadataError || error instanceof ArtifactMetadataError) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
   throw error;

@@ -16,17 +16,17 @@ export async function generateMetadata(): Promise<Metadata> {
 
   return {
     title: {
-      default: "Relay — Private or public checkpoints for agent workspaces.",
+      default: "Relay — Private or public checkpoints for agents and skills.",
       template: "%s · Relay",
     },
     description:
-      "Keep agent workspace checkpoints locally encrypted, or intentionally publish a sanitized artifact for stable, keyless restore.",
+      "Keep agent workspaces or individual skills locally encrypted, or intentionally publish a sanitized artifact for stable, keyless restore.",
     icons: {
       icon: "/favicon.svg",
       shortcut: "/favicon.svg",
     },
     openGraph: {
-      title: "Relay — Private or public checkpoints for agent workspaces.",
+      title: "Relay — Private or public checkpoints for agents and skills.",
       description: "Private ciphertext by default, intentionally readable public artifacts when you choose.",
       type: "website",
       images: [
@@ -34,13 +34,13 @@ export async function generateMetadata(): Promise<Metadata> {
           url: socialImage,
           width: 1536,
           height: 1024,
-          alt: "Relay — private or public checkpoints for agent workspaces",
+          alt: "Relay — private or public checkpoints for agents and skills",
         },
       ],
     },
     twitter: {
       card: "summary_large_image",
-      title: "Relay — Private or public checkpoints for agent workspaces.",
+      title: "Relay — Private or public checkpoints for agents and skills.",
       description: "Private ciphertext by default, intentionally readable public artifacts when you choose.",
       images: [socialImage],
     },

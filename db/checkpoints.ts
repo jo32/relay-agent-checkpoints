@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { ensureRelaySchema } from "./identity";
 import type { AgentMetadataMode } from "../lib/agent-metadata";
+import type { CheckpointArtifactType } from "../lib/artifact-metadata";
 
 export type StoredCheckpointRecord = {
   id: string;
@@ -10,6 +11,9 @@ export type StoredCheckpointRecord = {
   workspaceName: string;
   label: string;
   sourceAgent: string;
+  artifactType: CheckpointArtifactType;
+  skillName: string | null;
+  skillDescription: string | null;
   agentName: string;
   agentDescription: string;
   agentMetadataMode: AgentMetadataMode;
@@ -61,6 +65,8 @@ export type MarketplaceSort = "recommended" | "latest";
 
 export type MarketplaceCheckpoint = {
   id: string;
+  artifactType: CheckpointArtifactType;
+  skill: { name: string; description: string } | null;
   title: string;
   description: string;
   agent: {
@@ -78,6 +84,9 @@ export type MarketplaceCheckpoint = {
 
 type RawMarketplaceCheckpoint = {
   id: string;
+  artifactType: CheckpointArtifactType;
+  skillName: string | null;
+  skillDescription: string | null;
   publicTitle: string;
   publicDescription: string;
   agentName: string;
@@ -153,6 +162,9 @@ export async function listCheckpoints(tenantId: string) {
       c.workspace_name AS workspaceName,
       c.label,
       c.source_agent AS sourceAgent,
+      c.artifact_type AS artifactType,
+      c.skill_name AS skillName,
+      c.skill_description AS skillDescription,
       c.agent_name AS agentName,
       c.agent_description AS agentDescription,
       c.agent_metadata_mode AS agentMetadataMode,
@@ -313,6 +325,9 @@ export async function findCheckpoint(id: string, tenantId: string) {
       c.workspace_name AS workspaceName,
       c.label,
       c.source_agent AS sourceAgent,
+      c.artifact_type AS artifactType,
+      c.skill_name AS skillName,
+      c.skill_description AS skillDescription,
       c.agent_name AS agentName,
       c.agent_description AS agentDescription,
       c.agent_metadata_mode AS agentMetadataMode,
@@ -402,6 +417,9 @@ export async function findPublicCheckpoint(id: string) {
       c.workspace_name AS workspaceName,
       c.label,
       c.source_agent AS sourceAgent,
+      c.artifact_type AS artifactType,
+      c.skill_name AS skillName,
+      c.skill_description AS skillDescription,
       c.agent_name AS agentName,
       c.agent_description AS agentDescription,
       c.agent_metadata_mode AS agentMetadataMode,
@@ -440,11 +458,13 @@ export async function findPublicCheckpoint(id: string) {
 export async function listMarketplaceCheckpoints({
   query = "",
   sort = "recommended",
+  artifactType,
   page = 1,
   pageSize = 24,
 }: {
   query?: string;
   sort?: MarketplaceSort;
+  artifactType?: CheckpointArtifactType;
   page?: number;
   pageSize?: number;
 } = {}) {
@@ -456,8 +476,10 @@ export async function listMarketplaceCheckpoints({
   const conditions = tokens.map(
     () => "search_text LIKE ? ESCAPE '\\'",
   );
+  if (artifactType) conditions.push("artifact_type = ?");
   const whereClause = conditions.length ? conditions.join(" AND ") : "1 = 1";
   const searchParameters = tokens.map(toLikePattern);
+  if (artifactType) searchParameters.push(artifactType);
   const safePage = Math.max(1, Math.min(10_000, Math.trunc(page) || 1));
   const safePageSize = Math.max(1, Math.min(48, Math.trunc(pageSize) || 24));
   const offset = (safePage - 1) * safePageSize;
@@ -484,6 +506,9 @@ export async function listMarketplaceCheckpoints({
   const result = await DB.prepare(
     `SELECT
       checkpoint_id AS id,
+      artifact_type AS artifactType,
+      skill_name AS skillName,
+      skill_description AS skillDescription,
       public_title AS publicTitle,
       public_description AS publicDescription,
       agent_name AS agentName,
@@ -593,6 +618,9 @@ export async function findSharedCheckpoint(token: string) {
       workspace_name AS workspaceName,
       label,
       source_agent AS sourceAgent,
+      artifact_type AS artifactType,
+      skill_name AS skillName,
+      skill_description AS skillDescription,
       agent_name AS agentName,
       agent_description AS agentDescription,
       agent_metadata_mode AS agentMetadataMode,
@@ -716,6 +744,14 @@ export function toOwnerCheckpointDto(checkpoint: CheckpointRecord | RawCheckpoin
     workspaceName: normalized.workspaceName,
     label: normalized.label,
     sourceAgent: normalized.sourceAgent,
+    artifactType: normalized.artifactType,
+    skill:
+      normalized.artifactType === "skill"
+        ? {
+            name: normalized.skillName!,
+            description: normalized.skillDescription!,
+          }
+        : null,
     agentName: normalized.agentName,
     agentDescription: normalized.agentDescription,
     agentMetadataMode: normalized.agentMetadataMode,
@@ -749,11 +785,12 @@ function checkpointInsertStatement(db: D1Database, record: StoredCheckpointRecor
     .prepare(
       `INSERT INTO checkpoints (
         id, owner_key, tenant_id, created_by_user_id,
-        workspace_name, label, source_agent, status, created_at,
+        workspace_name, label, source_agent, artifact_type, skill_name,
+        skill_description, status, created_at,
         agent_name, agent_description, agent_metadata_mode,
         size_bytes, file_count, excluded_count, parent_id, handoff, object_key, checksum,
         encryption_version, cipher, share_token, share_expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       record.id,
@@ -763,6 +800,9 @@ function checkpointInsertStatement(db: D1Database, record: StoredCheckpointRecor
       record.workspaceName,
       record.label,
       record.sourceAgent,
+      record.artifactType,
+      record.skillName,
+      record.skillDescription,
       record.status,
       record.createdAt,
       record.agentName,
@@ -821,6 +861,8 @@ function marketplaceIndexInsertStatement(
       publication.publicDescription,
       checkpoint.agentName,
       checkpoint.agentDescription,
+      checkpoint.skillName ?? "",
+      checkpoint.skillDescription ?? "",
     ].join(" "),
   );
   const qualityScore =
@@ -838,9 +880,10 @@ function marketplaceIndexInsertStatement(
     .prepare(
       `INSERT INTO checkpoint_marketplace_index (
         checkpoint_id, public_title, public_description, agent_name,
-        agent_description, agent_metadata_mode, search_text, quality_score,
-        size_bytes, format_version, published_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        agent_description, agent_metadata_mode, artifact_type, skill_name,
+        skill_description, search_text, quality_score, size_bytes,
+        format_version, published_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       publication.checkpointId,
@@ -849,6 +892,9 @@ function marketplaceIndexInsertStatement(
       checkpoint.agentName,
       checkpoint.agentDescription,
       checkpoint.agentMetadataMode,
+      checkpoint.artifactType,
+      checkpoint.skillName,
+      checkpoint.skillDescription,
       searchText,
       qualityScore,
       publication.sizeBytes,
@@ -865,8 +911,9 @@ function marketplaceIndexFromPublicationStatement(
     .prepare(
       `INSERT OR IGNORE INTO checkpoint_marketplace_index (
         checkpoint_id, public_title, public_description, agent_name,
-        agent_description, agent_metadata_mode, search_text, quality_score,
-        size_bytes, format_version, published_at
+        agent_description, agent_metadata_mode, artifact_type, skill_name,
+        skill_description, search_text, quality_score, size_bytes,
+        format_version, published_at
       )
       SELECT
         p.checkpoint_id,
@@ -875,9 +922,13 @@ function marketplaceIndexFromPublicationStatement(
         c.agent_name,
         c.agent_description,
         c.agent_metadata_mode,
+        c.artifact_type,
+        c.skill_name,
+        c.skill_description,
         lower(
           p.checkpoint_id || ' ' || p.public_title || ' ' || p.public_description || ' ' ||
-          c.agent_name || ' ' || c.agent_description
+          c.agent_name || ' ' || c.agent_description || ' ' ||
+          COALESCE(c.skill_name, '') || ' ' || COALESCE(c.skill_description, '')
         ),
         (
           CASE WHEN length(p.public_title) BETWEEN 12 AND 80 THEN 3 ELSE 1 END +
@@ -913,6 +964,11 @@ function toMarketplaceCheckpoint(
   const encodedId = encodeURIComponent(checkpoint.id);
   return {
     id: checkpoint.id,
+    artifactType: checkpoint.artifactType,
+    skill:
+      checkpoint.artifactType === "skill" && checkpoint.skillName && checkpoint.skillDescription
+        ? { name: checkpoint.skillName, description: checkpoint.skillDescription }
+        : null,
     title: checkpoint.publicTitle,
     description: checkpoint.publicDescription,
     agent: {
@@ -956,6 +1012,9 @@ function toCheckpointRecord(row: RawCheckpointRecord): CheckpointRecord {
     workspaceName: row.workspaceName,
     label: row.label,
     sourceAgent: row.sourceAgent,
+    artifactType: row.artifactType,
+    skillName: row.skillName,
+    skillDescription: row.skillDescription,
     agentName: row.agentName,
     agentDescription: row.agentDescription,
     agentMetadataMode: row.agentMetadataMode,

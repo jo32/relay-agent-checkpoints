@@ -13,7 +13,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const socialImage = new URL("/og-marketplace.png", origin).toString();
   const title = "Public checkpoint marketplace";
   const description =
-    "Search, discover, and restore intentionally public Relay workspace checkpoints.";
+    "Search, discover, and restore intentionally public Relay agent workspaces and skills.";
 
   return {
     title,
@@ -45,13 +45,19 @@ export const dynamic = "force-dynamic";
 export default async function MarketplacePage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; sort?: string }>;
+  searchParams: Promise<{ q?: string; sort?: string; type?: string }>;
 }) {
   const params = await searchParams;
   const initialQuery = typeof params.q === "string" ? params.q.slice(0, 160) : "";
   const initialSort = params.sort === "latest" ? "latest" : "recommended";
+  const initialType =
+    params.type === "agent" || params.type === "skill" ? params.type : "all";
 
   return (
-    <MarketplaceClient initialQuery={initialQuery} initialSort={initialSort} />
+    <MarketplaceClient
+      initialQuery={initialQuery}
+      initialSort={initialSort}
+      initialType={initialType}
+    />
   );
 }

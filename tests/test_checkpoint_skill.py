@@ -429,6 +429,189 @@ class CheckpointSkillTests(unittest.TestCase):
             )
             self.assertFalse(header_mismatched_destination.exists())
 
+    def test_create_publish_and_install_individual_skill_checkpoint(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            skill = base / "release-auditor"
+            skill.mkdir()
+            skill_description = (
+                "Audits a release candidate and produces a verified handoff."
+            )
+            (skill / "SKILL.md").write_text(
+                "---\n"
+                "name: release-auditor\n"
+                f"description: {skill_description}\n"
+                "---\n\n"
+                "# Release Auditor\n",
+                encoding="utf-8",
+            )
+            (skill / "scripts").mkdir()
+            (skill / "scripts" / "audit.py").write_text(
+                "print('verified')\n",
+                encoding="utf-8",
+            )
+            publication = {
+                "title": "Release auditor skill",
+                "description": "A reusable skill for reviewing release candidates.",
+            }
+            created = json.loads(
+                self.run_script(
+                    CREATE,
+                    "--root",
+                    str(skill),
+                    "--artifact-type",
+                    "skill",
+                    "--output-dir",
+                    str(base / "out"),
+                    "--visibility",
+                    "public",
+                    "--public-title",
+                    publication["title"],
+                    "--public-description",
+                    publication["description"],
+                    "--yes",
+                    "--json",
+                ).stdout
+            )
+
+            self.assertEqual(created["artifactType"], "skill")
+            self.assertEqual(
+                created["skill"],
+                {"name": "release-auditor", "description": skill_description},
+            )
+            self.assertEqual(
+                created["publicFiles"],
+                ["SKILL.md", "scripts/audit.py"],
+            )
+            with tarfile.open(created["archive"], "r:gz") as archive:
+                manifest_file = archive.extractfile(
+                    ".agent-checkpoint/manifest.json"
+                )
+                self.assertIsNotNone(manifest_file)
+                manifest = json.load(manifest_file)
+            self.assertEqual(manifest["artifactType"], "skill")
+            self.assertEqual(manifest["skill"], created["skill"])
+
+            skills_root = base / "installed-skills"
+            artifact = {"type": "skill", "skill": created["skill"]}
+            with archive_server(
+                Path(created["archive"]),
+                checkpoint_id=created["checkpointId"],
+                publication=publication,
+                artifact=artifact,
+            ) as url:
+                restored = json.loads(
+                    self.run_script(
+                        RESTORE,
+                        "--checkpoint",
+                        url,
+                        "--destination",
+                        str(skills_root),
+                        "--install-skill",
+                        "--json",
+                    ).stdout
+                )
+            installed = skills_root / "release-auditor"
+            self.assertEqual(restored["restoreMode"], "install-skill")
+            self.assertEqual(restored["artifactType"], "skill")
+            self.assertEqual(restored["skill"], created["skill"])
+            self.assertTrue((installed / "SKILL.md").is_file())
+            self.assertTrue((installed / "scripts" / "audit.py").is_file())
+            self.assertFalse((installed / ".agent-checkpoint").exists())
+
+    def test_create_private_skill_checkpoint_and_install_after_decryption(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            skill = base / "private-reviewer"
+            skill.mkdir()
+            description = "Reviews private changes without publishing workspace files."
+            (skill / "SKILL.md").write_text(
+                "---\n"
+                "name: private-reviewer\n"
+                f"description: {description}\n"
+                "---\n\n"
+                "# Private Reviewer\n",
+                encoding="utf-8",
+            )
+            (skill / "check.py").write_text("print('private')\n", encoding="utf-8")
+            created = json.loads(
+                self.run_script(
+                    CREATE,
+                    "--root",
+                    str(skill),
+                    "--artifact-type",
+                    "skill",
+                    "--output-dir",
+                    str(base / "out"),
+                    "--visibility",
+                    "private",
+                    "--prompt-key",
+                    "--json",
+                    input_text=f"{CHECKPOINT_KEY}\n",
+                ).stdout
+            )
+            self.assertTrue(created["encrypted"])
+            self.assertEqual(created["artifactType"], "skill")
+            self.assertEqual(
+                created["skill"],
+                {"name": "private-reviewer", "description": description},
+            )
+            artifact_sidecar = Path(created["artifactMetadataFile"])
+            self.assertTrue(artifact_sidecar.is_file())
+            if os.name != "nt":
+                self.assertEqual(artifact_sidecar.stat().st_mode & 0o777, 0o600)
+
+            destination = base / "installed"
+            artifact = {"type": "skill", "skill": created["skill"]}
+            with archive_server(
+                Path(created["archive"]),
+                checkpoint_id=created["checkpointId"],
+                artifact=artifact,
+            ) as url:
+                restored = json.loads(
+                    self.run_script(
+                        RESTORE,
+                        "--checkpoint",
+                        url,
+                        "--destination",
+                        str(destination),
+                        "--install-skill",
+                        "--json",
+                        input_text=f"{CHECKPOINT_KEY}\n",
+                    ).stdout
+                )
+            installed = destination / "private-reviewer"
+            self.assertEqual(restored["restoreMode"], "install-skill")
+            self.assertTrue(restored["encrypted"])
+            self.assertEqual((installed / "check.py").read_text(), "print('private')\n")
+            self.assertFalse((installed / ".agent-checkpoint").exists())
+
+    def test_skill_checkpoint_rejects_directory_name_mismatch(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            skill = Path(temporary) / "wrong-directory"
+            skill.mkdir()
+            (skill / "SKILL.md").write_text(
+                "---\n"
+                "name: declared-skill\n"
+                "description: A valid description with the wrong directory.\n"
+                "---\n",
+                encoding="utf-8",
+            )
+            rejected = self.run_script(
+                CREATE,
+                "--root",
+                str(skill),
+                "--artifact-type",
+                "skill",
+                "--dry-run",
+                check=False,
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn(
+                "directory name must match the SKILL.md name",
+                rejected.stderr,
+            )
+
     def test_public_create_requires_metadata_and_rejects_key_options(self):
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary) / "project"
@@ -1937,6 +2120,7 @@ def archive_server(
     publication: dict[str, str] | None = None,
     uppercase_checksum: bool = False,
     send_checkpoint_id_header: bool = True,
+    artifact: dict[str, object] | None = None,
 ):
     archive_bytes = archive.read_bytes()
     checksum = hashlib.sha256(archive_bytes).hexdigest()
@@ -1986,6 +2170,18 @@ def archive_server(
                     urllib.parse.quote(agent["description"], safe=""),
                 )
                 self.send_header("X-Relay-Agent-Metadata-Mode", agent["mode"])
+            if artifact:
+                self.send_header("X-Relay-Artifact-Type", str(artifact["type"]))
+                skill = artifact.get("skill")
+                if artifact["type"] == "skill" and isinstance(skill, dict):
+                    self.send_header(
+                        "X-Relay-Skill-Name",
+                        urllib.parse.quote(str(skill["name"]), safe=""),
+                    )
+                    self.send_header(
+                        "X-Relay-Skill-Description",
+                        urllib.parse.quote(str(skill["description"]), safe=""),
+                    )
             self.end_headers()
             self.wfile.write(archive_bytes)
 

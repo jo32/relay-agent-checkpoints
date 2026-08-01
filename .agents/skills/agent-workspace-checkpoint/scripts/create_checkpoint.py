@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a sanitized, immutable agent workspace checkpoint."""
+"""Create a sanitized, immutable agent workspace or skill checkpoint."""
 
 from __future__ import annotations
 
@@ -20,6 +20,13 @@ from agent_metadata import (
     AgentMetadataError,
     resolve_agent_metadata,
     save_agent_metadata,
+)
+from artifact_metadata import (
+    ARTIFACT_TYPES,
+    ArtifactMetadataError,
+    api_artifact_metadata,
+    resolve_artifact_metadata,
+    save_artifact_metadata,
 )
 from checkpoint_lib import (
     FORMAT_VERSION,
@@ -49,6 +56,12 @@ from public_checkpoint import (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True, help="Project directory")
+    parser.add_argument(
+        "--artifact-type",
+        choices=ARTIFACT_TYPES,
+        default="agent",
+        help="Save an entire agent workspace or one validated skill directory",
+    )
     parser.add_argument("--label", default="agent-handoff")
     parser.add_argument("--handoff-file", type=Path)
     parser.add_argument("--parent")
@@ -165,6 +178,13 @@ def main() -> int:
     args = parse_args()
     root = args.root.expanduser().resolve()
     try:
+        artifact_metadata = resolve_artifact_metadata(
+            artifact_type=args.artifact_type,
+            root=root,
+        )
+    except ArtifactMetadataError as error:
+        raise SystemExit(str(error)) from error
+    try:
         included, excluded, context = select_files(root)
     except ValueError as error:
         raise SystemExit(str(error)) from error
@@ -172,6 +192,8 @@ def main() -> int:
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     checkpoint_id = f"cp_{secrets.token_hex(16)}"
     label = args.label.strip() or "agent-handoff"
+    if artifact_metadata["type"] == "skill" and label == "agent-handoff":
+        label = str(artifact_metadata["skill"]["name"])
     is_public = args.visibility == "public"
     if is_public and args.key_mode is not None:
         raise SystemExit(
@@ -233,6 +255,12 @@ def main() -> int:
         "root": ".",
         "label": label,
         "sourceAgent": args.source_agent,
+        "artifactType": artifact_metadata["type"],
+        **(
+            {"skill": artifact_metadata["skill"]}
+            if artifact_metadata["skill"]
+            else {}
+        ),
         "baseSnapshot": args.parent,
         "treeHash": f"sha256:{context['treeHash']}",
         "stacks": context["stacks"],
@@ -253,6 +281,7 @@ def main() -> int:
         [
             f"# {label}",
             "",
+            f"- Artifact: **{artifact_metadata['type']}**",
             f"- Workspace: **{root.name}**",
             f"- Created: {created_at}",
             f"- Created by: **{args.source_agent}**",
@@ -287,6 +316,8 @@ def main() -> int:
         "stacks": context["stacks"],
         "treeHash": f"sha256:{context['treeHash']}",
         "visibility": args.visibility,
+        "artifactType": artifact_metadata["type"],
+        "skill": artifact_metadata["skill"],
         "publication": publication,
         "encrypted": not is_public,
         "encryptionVersion": 0 if is_public else 2,
@@ -303,6 +334,12 @@ def main() -> int:
                 "root": ".",
                 "label": publication["title"],
                 "sourceAgent": "Agent skill",
+                "artifactType": artifact_metadata["type"],
+                **(
+                    {"skill": artifact_metadata["skill"]}
+                    if artifact_metadata["skill"]
+                    else {}
+                ),
                 "baseSnapshot": None,
                 "treeHash": f"sha256:{context['treeHash']}",
                 "stacks": [
@@ -329,6 +366,7 @@ def main() -> int:
         "keyFile": None,
         "agent": agent_metadata,
         "agentMetadataFile": None,
+        "artifactMetadataFile": None,
         "dryRun": args.dry_run,
         "uploaded": False,
         "exclusions": [{"path": item.path, "reason": item.reason} for item in excluded],
@@ -393,7 +431,11 @@ def main() -> int:
                     add_bytes(
                         archive,
                         ".agent-checkpoint/README.md",
-                        b"# Agent workspace checkpoint\n\nRead HANDOFF.md before editing. Verify manifest hashes when restoring.\n",
+                        (
+                            b"# Agent skill checkpoint\n\nVerify SKILL.md and manifest hashes before installing.\n"
+                            if artifact_metadata["type"] == "skill"
+                            else b"# Agent workspace checkpoint\n\nRead HANDOFF.md before editing. Verify manifest hashes when restoring.\n"
+                        ),
                     )
                 if is_public:
                     assert publication is not None
@@ -477,6 +519,15 @@ def main() -> int:
         except AgentMetadataError as error:
             raise SystemExit(str(error)) from error
         summary["agentMetadataFile"] = str(metadata_sidecar)
+        try:
+            artifact_sidecar = save_artifact_metadata(
+                archive_path,
+                checkpoint_id,
+                artifact_metadata,
+            )
+        except ArtifactMetadataError as error:
+            raise SystemExit(str(error)) from error
+        summary["artifactMetadataFile"] = str(artifact_sidecar)
         if args.upload:
             try:
                 upload_result = upload_checkpoint(
@@ -486,6 +537,7 @@ def main() -> int:
                     checkpoint_id=checkpoint_id,
                     checksum=summary["archiveSha256"],
                     agent_metadata=agent_metadata,
+                    artifact_metadata=api_artifact_metadata(artifact_metadata),
                     operation=(
                         "create-public" if is_public else "create-private"
                     ),

@@ -57,10 +57,39 @@ function publicCheckpointArchive(
   title,
   description,
   additionalEntries = [],
+  artifact = { type: "agent", skill: null },
 ) {
   const source = Buffer.from("public checkpoint content\n");
   const sourceDigest = createHash("sha256").update(source).digest("hex");
-  const treeMaterial = Buffer.from(`README.md\0${sourceDigest}\n`);
+  const skillSource = artifact.type === "skill"
+    ? Buffer.from(
+        `---\nname: ${artifact.skill.name}\ndescription: ${artifact.skill.description}\n---\n\n# ${artifact.skill.name}\n`,
+      )
+    : null;
+  const skillDigest = skillSource
+    ? createHash("sha256").update(skillSource).digest("hex")
+    : null;
+  const manifestFiles = [
+    {
+      path: "README.md",
+      size: source.length,
+      mode: 0o644,
+      sha256: `sha256:${sourceDigest}`,
+    },
+    ...(skillSource
+      ? [{
+          path: "SKILL.md",
+          size: skillSource.length,
+          mode: 0o644,
+          sha256: `sha256:${skillDigest}`,
+        }]
+      : []),
+  ];
+  const treeMaterial = Buffer.from(
+    manifestFiles
+      .map((file) => `${file.path}\0${file.sha256.slice("sha256:".length)}\n`)
+      .join(""),
+  );
   const manifest = Buffer.from(
     `${JSON.stringify(
       {
@@ -72,18 +101,13 @@ function publicCheckpointArchive(
         root: ".",
         label: title,
         sourceAgent: "Rendered HTML test agent",
+        artifactType: artifact.type,
+        ...(artifact.skill ? { skill: artifact.skill } : {}),
         baseSnapshot: null,
         treeHash: `sha256:${createHash("sha256").update(treeMaterial).digest("hex")}`,
         stacks: ["Test"],
         git: { isRepository: false },
-        files: [
-          {
-            path: "README.md",
-            size: source.length,
-            mode: 0o644,
-            sha256: `sha256:${sourceDigest}`,
-          },
-        ],
+        files: manifestFiles,
         exclusions: [],
         publication: { title, description },
       },
@@ -97,6 +121,7 @@ function publicCheckpointArchive(
     // Python's tarfile uses question marks in the legacy header when a PAX
     // path contains characters that cannot be represented there.
     tarEntry("README??.md", source),
+    ...(skillSource ? [tarEntry("SKILL.md", skillSource)] : []),
     ...additionalEntries.flatMap(({ name, data, pax }) =>
       pax
         ? [
@@ -255,7 +280,7 @@ test("server-renders the Relay product shell", async () => {
   const html = await response.text();
   assert.match(
     html,
-    /<title>Relay — Private or public checkpoints for agent workspaces\.<\/title>/i,
+    /<title>Relay — Private or public checkpoints for agents and skills\.<\/title>/i,
   );
   assert.match(html, /Workspace continuity/);
   assert.match(html, /Connect skills/);
@@ -418,7 +443,10 @@ test("agent-operated skill prompts are copy-ready", async () => {
   assert.match(source, /Run all commands yourself/);
   assert.match(source, /one-sentence summary of what this agent did/);
   assert.match(source, /playful pseudonym/);
-  assert.match(source, /checkpoint\.publication\?\.title \|\| checkpoint\.label/);
+  assert.match(
+    source,
+    /checkpoint\.publication\?\.title \|\| checkpoint\.skill\?\.name \|\| checkpoint\.label/,
+  );
   assert.match(source, /return checkpoint\.publication\.description/);
   assert.match(source, /visibility-badge \$\{checkpoint\.visibility\}/);
   assert.match(source, /Shared" : "Pseudonym/);
@@ -645,6 +673,8 @@ test("device authorization issues and revokes a scoped agent credential", async 
     "Hardened checkpoint uploads and verified the encrypted handoff.",
   );
   assert.equal(metadata.checkpoint.agentMetadataMode, "shared");
+  assert.equal(metadata.checkpoint.artifactType, "agent");
+  assert.equal(metadata.checkpoint.skill, null);
 
   const listResponse = await fetch(`${origin}/api/checkpoints`, {
     headers: { authorization: `Bearer ${token.access_token}` },
@@ -718,6 +748,40 @@ test("device authorization issues and revokes a scoped agent credential", async 
     `/marketplace?q=${directPublicId}`,
   );
 
+  const publicSkillId = `cp_public_skill_${Date.now()}`;
+  const skill = {
+    name: "release-auditor",
+    description: "Audits a release candidate and produces a verified handoff.",
+  };
+  const publicSkill = await uploadCheckpointArchive(
+    token.access_token,
+    {
+      operation: "create-public",
+      checkpointId: publicSkillId,
+      encryptionVersion: 0,
+      cipher: "none",
+      publicFormatVersion: 1,
+      publicTitle: "Release auditor skill",
+      publicDescription:
+        "A reusable public skill for reviewing release candidates safely.",
+      artifactType: "skill",
+      skillName: skill.name,
+      skillDescription: skill.description,
+      agentName: "Release Gardener",
+      agentDescription: "Published a validated reusable agent skill.",
+      agentMetadataMode: "shared",
+    },
+    publicCheckpointArchive(
+      publicSkillId,
+      "Release auditor skill",
+      "A reusable public skill for reviewing release candidates safely.",
+      [],
+      { type: "skill", skill },
+    ),
+  );
+  assert.equal(publicSkill.completed.checkpoint.artifactType, "skill");
+  assert.deepEqual(publicSkill.completed.checkpoint.skill, skill);
+
   const publicMetadataResponse = await fetch(
     `${origin}/api/public/checkpoints/${directPublicId}`,
   );
@@ -733,7 +797,7 @@ test("device authorization issues and revokes a scoped agent credential", async 
   );
   assert.deepEqual(
     Object.keys(publicMetadata.checkpoint).sort(),
-    ["agent", "id", "marketplaceUrl", "publication", "visibility"],
+    ["agent", "artifactType", "id", "marketplaceUrl", "publication", "skill", "visibility"],
   );
   assert.equal(
     publicMetadata.checkpoint.publication.sourceCiphertextChecksum,
@@ -742,6 +806,34 @@ test("device authorization issues and revokes a scoped agent credential", async 
   assert.equal(
     publicMetadata.checkpoint.marketplaceUrl,
     `/marketplace?q=${directPublicId}`,
+  );
+
+  const publicSkillMetadataResponse = await fetch(
+    `${origin}/api/public/checkpoints/${publicSkillId}`,
+  );
+  assert.equal(publicSkillMetadataResponse.status, 200);
+  const publicSkillMetadata = await publicSkillMetadataResponse.json();
+  assert.equal(publicSkillMetadata.checkpoint.artifactType, "skill");
+  assert.deepEqual(publicSkillMetadata.checkpoint.skill, skill);
+
+  const skillMarketplaceResponse = await fetch(
+    `${origin}/api/public/checkpoints?type=skill&sort=latest&limit=48`,
+  );
+  assert.equal(skillMarketplaceResponse.status, 200);
+  const skillMarketplace = await skillMarketplaceResponse.json();
+  assert.ok(
+    skillMarketplace.checkpoints.some((item) => item.id === publicSkillId),
+  );
+  assert.ok(
+    skillMarketplace.checkpoints.every((item) => item.artifactType === "skill"),
+  );
+  const agentMarketplaceResponse = await fetch(
+    `${origin}/api/public/checkpoints?type=agent&sort=latest&limit=48`,
+  );
+  assert.equal(agentMarketplaceResponse.status, 200);
+  const agentMarketplace = await agentMarketplaceResponse.json();
+  assert.ok(
+    agentMarketplace.checkpoints.every((item) => item.artifactType === "agent"),
   );
 
   const marketplaceSearchResponse = await fetch(
@@ -764,9 +856,7 @@ test("device authorization issues and revokes a scoped agent credential", async 
     marketplaceItem.marketplaceUrl,
     `/marketplace?q=${directPublicId}`,
   );
-  assert.ok(
-    marketplaceSearch.recommendations.some((item) => item.id === directPublicId),
-  );
+  assert.ok(marketplaceSearch.recommendations.length <= 3);
   assert.ok(
     marketplaceSearch.checkpoints.every((item) => item.id !== checkpointId),
     "private checkpoints must never enter the public marketplace index",
@@ -779,6 +869,10 @@ test("device authorization issues and revokes a scoped agent credential", async 
   const marketplaceIdSearch = await marketplaceIdSearchResponse.json();
   assert.deepEqual(
     marketplaceIdSearch.checkpoints.map((item) => item.id),
+    [directPublicId],
+  );
+  assert.deepEqual(
+    marketplaceIdSearch.recommendations.map((item) => item.id),
     [directPublicId],
   );
 
@@ -810,6 +904,20 @@ test("device authorization issues and revokes a scoped agent credential", async 
   assert.deepEqual(
     Buffer.from(await publicDownloadResponse.arrayBuffer()),
     directPublicArchive,
+  );
+  const publicSkillDownloadResponse = await fetch(
+    `${origin}/api/public/checkpoints/${publicSkillId}/download`,
+  );
+  assert.equal(publicSkillDownloadResponse.status, 200);
+  assert.equal(
+    publicSkillDownloadResponse.headers.get("x-relay-artifact-type"),
+    "skill",
+  );
+  assert.equal(
+    decodeURIComponent(
+      publicSkillDownloadResponse.headers.get("x-relay-skill-name"),
+    ),
+    skill.name,
   );
   const abortCompletedResponse = await fetch(
     `${origin}/api/checkpoints/uploads/${directPublic.initialized.uploadId}`,

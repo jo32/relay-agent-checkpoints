@@ -1,11 +1,11 @@
 ---
 name: agent-workspace-checkpoint
-description: Connect a local agent to Relay; create, publish, and delete private encrypted or intentionally public keyless workspace checkpoints without sending recovery keys. Use for safe project handoffs, immutable-until-deleted snapshots, public agent workspaces, private-to-public publication, and owner-requested removal.
+description: Connect a local agent to Relay; create, publish, and delete private encrypted or intentionally public keyless checkpoints for complete agent workspaces or individual reusable skills without sending recovery keys. Use for safe project handoffs, skill sharing, immutable-until-deleted snapshots, public artifacts, private-to-public publication, and owner-requested removal.
 ---
 
 # Agent Workspace Checkpoint
 
-Create a safe archive with an explicit visibility choice. Private checkpoints use a locally generated or privately entered recovery key and upload only AES-256-GCM ciphertext. Public checkpoints use no key and upload an intentionally readable canonical archive with an approved public title and description. Publishing an existing private checkpoint decrypts, validates, sanitizes, and re-scans it locally, then uploads only a separate public artifact. Recovery keys are never sent to Relay. Do not restore or execute a checkpoint with this skill; use `$restore-agent-workspace` for that.
+Create a safe archive of either a complete agent workspace or one reusable skill directory with an explicit visibility choice. Skill checkpoints require a root `SKILL.md` whose name matches the directory and package only that directory. Private checkpoints use a locally generated or privately entered recovery key and upload only AES-256-GCM ciphertext. Public checkpoints use no key and upload an intentionally readable canonical archive with an approved public title and description. Publishing an existing private checkpoint decrypts, validates, sanitizes, and re-scans it locally, then uploads only a separate public artifact. Recovery keys are never sent to Relay. Do not restore or execute a checkpoint with this skill; use `$restore-agent-workspace` for that.
 
 ## Connect to Relay
 
@@ -50,8 +50,9 @@ Never request a Relay access credential or encryption key in chat. Never place e
 ## Create and upload
 
 1. Connect to Relay as described above if the saved credential is unavailable or expired.
-2. Identify the project root.
+2. Identify whether the user wants the complete agent workspace (default) or one skill. For a skill, identify the exact skill directory, verify that it contains a regular root `SKILL.md`, and use `--artifact-type skill` with that directory as `--root`. Never widen a skill request to the containing project.
 3. Before a non-dry-run creation, ask one short question covering all choices:
+   - “Should I save the complete agent workspace (recommended/default) or one reusable skill?”
    - “Should this checkpoint be private (recommended/default) or intentionally public?”
    - For private: “Should I generate and securely save a recovery key, or let you enter one privately?”
    - For public: “What public title and one-sentence public description should accompany it?”
@@ -92,6 +93,8 @@ python3 scripts/create_checkpoint.py \
 ```
 
 The generated 43-character recovery key is saved under the protected Relay configuration directory with file mode `0600`. Return the recovery-key file path, but never read or reveal its contents in chat. Tell the user to keep that file private and back it up separately from the checkpoint.
+
+For one skill, point `--root` at the skill directory and add `--artifact-type skill`. The script validates the root `SKILL.md` name and description, requires the directory name to match, records those fields in the authenticated manifest, and saves a protected artifact sidecar so upload retries preserve the type.
 
 If the user chooses their own key, add `--prompt-key` instead of `--generate-key`. Only this path uses a hidden local prompt, and the user enters the key once—never ask them to repeat it for confirmation. The key may contain any 8 or more characters, including spaces and Unicode; a longer, unique passphrase is strongly recommended. Never request the key in chat or place it in command arguments, environment variables, project files, logs, handoff text, or API requests.
 
@@ -245,6 +248,8 @@ Each checkpoint contains:
 ```
 
 Private manifests record lineage, source agent, Git state, file hashes, exclusions, and a deterministic tree hash inside ciphertext. Public manifests use `formatVersion: 2`, `visibility: "public"`, and a `publication` object containing the approved title and description. The public projection removes private workspace names, raw Git remotes/status, private parent IDs, exclusion paths, and the original private handoff.
+
+All new manifests also include `artifactType: "agent" | "skill"`. Skill manifests include a `skill` object with the validated `SKILL.md` name and description. Existing manifests without `artifactType` remain agent checkpoints for compatibility.
 
 ## Create a keyless share link
 

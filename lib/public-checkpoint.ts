@@ -23,6 +23,9 @@ export type PublicCheckpointArchiveExpectation = {
   checkpointId: string;
   title: string;
   description: string;
+  artifactType?: "agent" | "skill";
+  skillName?: string | null;
+  skillDescription?: string | null;
 };
 
 export class PublicCheckpointError extends Error {}
@@ -281,11 +284,35 @@ class TarFramingValidator {
         new TextDecoder("utf-8", { fatal: true }).decode(bytes),
       ) as Record<string, unknown>;
       const publication = manifest.publication;
+      const artifactType = manifest.artifactType ?? "agent";
+      const skill = manifest.skill;
+      const files = manifest.files;
+      const expectedArtifactType = this.expectation.artifactType ?? "agent";
+      const skillMatches =
+        expectedArtifactType === "agent"
+          ? skill == null
+          : typeof skill === "object" &&
+            skill !== null &&
+            !Array.isArray(skill) &&
+            (skill as Record<string, unknown>).name ===
+              this.expectation.skillName &&
+            (skill as Record<string, unknown>).description ===
+              this.expectation.skillDescription &&
+            Array.isArray(files) &&
+            files.some(
+              (file) =>
+                typeof file === "object" &&
+                file !== null &&
+                !Array.isArray(file) &&
+                (file as Record<string, unknown>).path === "SKILL.md",
+            );
       return (
         manifest.formatVersion === 2 &&
         manifest.visibility === "public" &&
         manifest.checkpointId === this.expectation.checkpointId &&
         manifest.label === this.expectation.title &&
+        artifactType === expectedArtifactType &&
+        skillMatches &&
         typeof publication === "object" &&
         publication !== null &&
         !Array.isArray(publication) &&

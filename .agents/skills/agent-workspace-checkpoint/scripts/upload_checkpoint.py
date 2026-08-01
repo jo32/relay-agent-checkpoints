@@ -15,6 +15,11 @@ from agent_metadata import (
     resolve_agent_metadata,
     save_agent_metadata,
 )
+from artifact_metadata import (
+    ArtifactMetadataError,
+    api_artifact_metadata,
+    load_artifact_metadata,
+)
 from checkpoint_lib import sha256_file
 from relay_credentials import RelayCredentialError, load_access_token
 from relay_crypto import RelayCryptoError, is_encrypted_checkpoint, read_encrypted_header
@@ -49,6 +54,7 @@ def main() -> int:
             required_scope="checkpoints:write",
         )
         stored_metadata = load_agent_metadata(archive, checkpoint_id)
+        artifact_metadata = load_artifact_metadata(archive, checkpoint_id)
         agent_metadata = resolve_agent_metadata(
             checkpoint_id=checkpoint_id,
             mode=(
@@ -62,7 +68,12 @@ def main() -> int:
                 or (stored_metadata or {}).get("description")
             ),
         )
-    except (AgentMetadataError, RelayCredentialError, RelayCryptoError) as error:
+    except (
+        AgentMetadataError,
+        ArtifactMetadataError,
+        RelayCredentialError,
+        RelayCryptoError,
+    ) as error:
         raise SystemExit(str(error)) from error
 
     digest = sha256_file(archive)
@@ -80,6 +91,7 @@ def main() -> int:
             checkpoint_id=checkpoint_id,
             checksum=checksum,
             agent_metadata=agent_metadata,
+            artifact_metadata=api_artifact_metadata(artifact_metadata),
         )
     except (OSError, RelayUploadError) as error:
         raise SystemExit(str(error)) from error
@@ -100,6 +112,8 @@ def main() -> int:
         "uploaded": True,
         "keyRequired": False,
         "agent": agent_metadata,
+        "artifactType": artifact_metadata["type"],
+        "skill": artifact_metadata["skill"],
         "agentMetadataFile": str(metadata_sidecar),
         "relay": relay,
     }

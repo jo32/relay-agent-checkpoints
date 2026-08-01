@@ -94,6 +94,9 @@ const PRODUCT_SCHEMA = [
     workspace_name TEXT NOT NULL,
     label TEXT NOT NULL,
     source_agent TEXT NOT NULL,
+    artifact_type TEXT NOT NULL DEFAULT 'agent',
+    skill_name TEXT,
+    skill_description TEXT,
     agent_name TEXT NOT NULL DEFAULT 'Mysterious Marmot',
     agent_description TEXT NOT NULL DEFAULT 'A privacy-minded helper that summarized progress and prepared an encrypted workspace handoff.',
     agent_metadata_mode TEXT NOT NULL DEFAULT 'pseudonymous',
@@ -148,6 +151,9 @@ const PRODUCT_SCHEMA = [
     agent_name TEXT NOT NULL,
     agent_description TEXT NOT NULL,
     agent_metadata_mode TEXT NOT NULL,
+    artifact_type TEXT NOT NULL DEFAULT 'agent',
+    skill_name TEXT,
+    skill_description TEXT,
     search_text TEXT NOT NULL,
     quality_score INTEGER NOT NULL DEFAULT 0,
     size_bytes INTEGER NOT NULL,
@@ -220,6 +226,32 @@ async function ensureSchema(db: D1Database): Promise<void> {
     "agent_metadata_mode",
     "TEXT NOT NULL DEFAULT 'pseudonymous'",
   );
+  await ensureColumn(
+    db,
+    "checkpoints",
+    "artifact_type",
+    "TEXT NOT NULL DEFAULT 'agent'",
+  );
+  await ensureColumn(db, "checkpoints", "skill_name", "TEXT");
+  await ensureColumn(db, "checkpoints", "skill_description", "TEXT");
+  await ensureColumn(
+    db,
+    "checkpoint_marketplace_index",
+    "artifact_type",
+    "TEXT NOT NULL DEFAULT 'agent'",
+  );
+  await ensureColumn(
+    db,
+    "checkpoint_marketplace_index",
+    "skill_name",
+    "TEXT",
+  );
+  await ensureColumn(
+    db,
+    "checkpoint_marketplace_index",
+    "skill_description",
+    "TEXT",
+  );
   await ensureColumn(db, "api_tokens", "tenant_id", "TEXT");
   await ensureColumn(db, "api_tokens", "created_by_user_id", "TEXT");
   await ensureColumn(
@@ -248,10 +280,14 @@ async function ensureSchema(db: D1Database): Promise<void> {
       "CREATE INDEX IF NOT EXISTS checkpoint_publications_tenant_published_idx ON checkpoint_publications(tenant_id, published_at DESC)",
     ),
     db.prepare(
+      "CREATE INDEX IF NOT EXISTS checkpoint_marketplace_artifact_idx ON checkpoint_marketplace_index(artifact_type, published_at DESC)",
+    ),
+    db.prepare(
       `INSERT OR IGNORE INTO checkpoint_marketplace_index (
         checkpoint_id, public_title, public_description, agent_name,
-        agent_description, agent_metadata_mode, search_text, quality_score,
-        size_bytes, format_version, published_at
+        agent_description, agent_metadata_mode, artifact_type, skill_name,
+        skill_description, search_text, quality_score, size_bytes,
+        format_version, published_at
       )
       SELECT
         p.checkpoint_id,
@@ -260,9 +296,13 @@ async function ensureSchema(db: D1Database): Promise<void> {
         c.agent_name,
         c.agent_description,
         c.agent_metadata_mode,
+        c.artifact_type,
+        c.skill_name,
+        c.skill_description,
         lower(
           p.checkpoint_id || ' ' || p.public_title || ' ' || p.public_description || ' ' ||
-          c.agent_name || ' ' || c.agent_description
+          c.agent_name || ' ' || c.agent_description || ' ' ||
+          COALESCE(c.skill_name, '') || ' ' || COALESCE(c.skill_description, '')
         ),
         (
           CASE WHEN length(p.public_title) BETWEEN 12 AND 80 THEN 3 ELSE 1 END +
@@ -280,7 +320,11 @@ async function ensureSchema(db: D1Database): Promise<void> {
 
 async function ensureColumn(
   db: D1Database,
-  table: "checkpoints" | "api_tokens" | "device_authorizations",
+  table:
+    | "checkpoints"
+    | "checkpoint_marketplace_index"
+    | "api_tokens"
+    | "device_authorizations",
   column: string,
   definition: string,
 ): Promise<void> {

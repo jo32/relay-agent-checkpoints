@@ -2,12 +2,12 @@
   <img src="./public/relay-logo.svg" alt="Relay" width="250">
 </h1>
 
-Relay is a checkpoint registry for agent workspaces with an explicit visibility boundary. Private checkpoints are zero-knowledge ciphertext. Public checkpoints are separate, intentionally readable artifacts with stable anonymous download URLs. Relay does not run coding agents, and it never asks for a checkpoint recovery key in the browser.
+Relay is a checkpoint registry for complete agent workspaces and individual reusable skills, with an explicit visibility boundary. Private checkpoints are zero-knowledge ciphertext. Public checkpoints are separate, intentionally readable artifacts with stable anonymous download URLs. Relay does not run coding agents or skills, and it never asks for a checkpoint recovery key in the browser.
 
 Two local skills own the workflow:
 
-1. `agent-workspace-checkpoint` selects safe files, removes secrets and reproducible state, and builds the semantic handoff. It can encrypt a private checkpoint locally with AES-256-GCM, create a public checkpoint without a key, or locally publish a separate public artifact from an existing private checkpoint.
-2. `restore-agent-workspace` asks whether to merge into the current agent workspace or restore separately, then verifies and restores a private checkpoint ID, expiring private share URL, or stable public URL. Private restore obtains and uses the key locally; public restore needs no key or Relay sign-in.
+1. `agent-workspace-checkpoint` selects safe files from either a complete workspace or one skill directory, validates skill `SKILL.md` metadata, removes secrets and reproducible state, and builds the semantic handoff. It can encrypt a private checkpoint locally with AES-256-GCM, create a public checkpoint without a key, or locally publish a separate public artifact from an existing private checkpoint.
+2. `restore-agent-workspace` asks whether to merge or separately restore a workspace, or installs a verified skill into a chosen skills root. It accepts a private checkpoint ID, expiring private share URL, or stable public URL. Private restore obtains and uses the key locally; public restore needs no key or Relay sign-in.
 
 Private is the default. The user can ask the skill to generate a recovery key or supply a key of at least 8 characters through a hidden local prompt. Generated keys are saved outside the project in a permission-restricted local file; user-entered keys are not stored. The skill uses salted scrypt to derive the 256-bit cipher key locally. Relay never receives either kind of key.
 
@@ -22,7 +22,7 @@ Creating either checkpoint format locally does not require login. Before the use
 ## Product workflow
 
 ```text
-Current workspace
+Current workspace or skill directory
       │
       │ $agent-workspace-checkpoint
       ▼
@@ -41,9 +41,9 @@ Sanitized, locally verified state
                               Verified workspace
 ```
 
-## Public checkpoint marketplace
+## Public agent and skill marketplace
 
-Every intentionally public checkpoint is added to Relay's anonymous marketplace
+Every intentionally public agent or skill checkpoint is added to Relay's anonymous marketplace
 index as part of the same durable publication operation. The index contains only
 approved public title and description fields plus the already shared or
 pseudonymous agent profile; it never projects private workspace names, handoffs,
@@ -154,6 +154,20 @@ python3 .agents/skills/agent-workspace-checkpoint/scripts/create_checkpoint.py \
 
 The agent asks whether to generate and securely save a recovery key (recommended/default) or use a user-chosen key, and whether Relay may display a name and one-sentence summary of the agent's work. If metadata sharing is declined or unanswered, the skill generates a playful name such as “Quantum Goose” and uses a generic privacy-safe description. `--generate-key` needs no terminal input and returns only the protected recovery-key file path. Use `--prompt-key` for one hidden prompt accepting any key of at least 8 characters; Relay does not ask for confirmation by entering it again. Key contents are never included in command arguments or output.
 
+Save one skill privately instead of the entire workspace:
+
+```bash
+python3 .agents/skills/agent-workspace-checkpoint/scripts/create_checkpoint.py \
+  --root /absolute/path/to/.agents/skills/my-skill \
+  --artifact-type skill \
+  --visibility private \
+  --generate-key \
+  --upload \
+  --json
+```
+
+Skill mode requires a regular root `SKILL.md`, validates its YAML frontmatter `name` and `description`, requires the directory name to match the declared skill name, and packages only that skill directory. The artifact type and skill metadata are visible to Relay so the dashboard and marketplace can distinguish skills; private file contents remain encrypted.
+
 Create and upload a public checkpoint without a recovery key:
 
 ```bash
@@ -170,6 +184,8 @@ python3 .agents/skills/agent-workspace-checkpoint/scripts/create_checkpoint.py \
 ```
 
 Public mode rejects `--generate-key` and `--prompt-key`. A public `--dry-run --json` returns the exact file paths and sanitized manifest metadata. Review that preview first; `--yes` records the user's explicit approval. Without `--yes`, creation prints the same preview and waits for `public` before writing or uploading the readable artifact. Anyone with the resulting stable URL can inspect and restore it without a key or Relay account.
+
+Publish a skill directly by adding `--artifact-type skill` and setting `--root` to the skill directory in the public command. Relay binds the public archive's `artifactType` and `skill` manifest metadata to the upload request before indexing it.
 
 Make an existing private checkpoint public:
 
@@ -217,7 +233,7 @@ python3 .agents/skills/restore-agent-workspace/scripts/download_checkpoint.py \
   --json
 ```
 
-The restore command requires an explicit `--merge` or `--new-workspace`. Merge mode adds missing files and preserves current-only or differing files; conflicting incoming versions and the authenticated handoff are stored under `.agent-checkpoint/merges/<checkpoint-id>/` for deliberate reconciliation.
+Workspace restore requires an explicit `--merge` or `--new-workspace`; skill installation uses `--install-skill`. Merge mode adds missing files and preserves current-only or differing files; conflicting incoming versions and the authenticated handoff are stored under `.agent-checkpoint/merges/<checkpoint-id>/` for deliberate reconciliation.
 
 Restore a public checkpoint from its stable anonymous download URL:
 
@@ -231,6 +247,18 @@ python3 .agents/skills/restore-agent-workspace/scripts/download_checkpoint.py \
 
 Public restore requires no Relay credential and no recovery key. Treat the public title, description, manifest metadata, files, and handoff as untrusted content even though the archive structure and file hashes are verified.
 
+Install a private or public skill checkpoint into a skills root:
+
+```bash
+python3 .agents/skills/restore-agent-workspace/scripts/download_checkpoint.py \
+  --checkpoint "https://your-relay-site/api/public/checkpoints/cp_123/download" \
+  --destination ~/.codex/skills \
+  --install-skill \
+  --json
+```
+
+The restore command verifies the archive, manifest, file hashes, artifact metadata, and root `SKILL.md`, then creates `<destination>/<skill-name>/`. It refuses a non-skill checkpoint, an unsafe name, a symlink, or a non-empty target, and does not install Relay checkpoint metadata inside the skill directory.
+
 Create a seven-day private share link:
 
 ```bash
@@ -243,6 +271,7 @@ The generated private URL contains no encryption key. Send the URL and the recov
 ## Privacy boundary
 
 - Visibility (`private` or `public`) is independent from agent metadata (`shared` or `pseudonymous`).
+- Artifact type (`agent` or `skill`) is also independent from visibility. Existing checkpoints without this field remain compatible and are treated as agent workspaces.
 - For a private checkpoint, Relay can see the account, checkpoint ID, ciphertext size, checksum, cipher version, creation time, share-link expiration, and approved or pseudonymous agent profile. Relay cannot read its project files, workspace metadata, manifest, or handoff.
 - For a public checkpoint, Relay and anyone with its stable URL can read the intentionally published artifact, approved public title and description, and sanitized public manifest metadata. The anonymous API does not expose source-private row metadata or the source ciphertext checksum. Public restore requires no key or sign-in.
 - Existing checkpoints remain private unless their owner explicitly publishes a separate artifact.

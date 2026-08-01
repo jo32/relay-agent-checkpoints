@@ -1,4 +1,4 @@
 interface:
-  display_name: "Restore Agent Workspace"
-  short_description: "Merge or separately restore Relay checkpoints"
-  default_prompt: "Use $restore-agent-workspace to ask whether I want to merge the Relay checkpoint into the current agent workspace or restore it separately, then verify and restore it. Private checkpoints decrypt locally with a key; public checkpoint URLs require neither sign-in nor a recovery key."
+  display_name: "Restore Agent or Skill"
+  short_description: "Restore workspaces or install verified skills"
+  default_prompt: "Use $restore-agent-workspace to inspect the Relay artifact type. For an agent, ask whether to merge or restore separately; for a skill, ask which skills root should receive a verified --install-skill restore."

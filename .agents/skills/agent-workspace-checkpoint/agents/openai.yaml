@@ -1,4 +1,4 @@
 interface:
-  display_name: "Agent Workspace Checkpoint"
-  short_description: "Create private or public Relay checkpoints"
-  default_prompt: "Use $agent-workspace-checkpoint to ask whether this checkpoint should remain private or become intentionally public. Keep private as the default. Public mode requires an approved title and description and no key; private-to-public publication must decrypt and sanitize locally without ever sending the original recovery key to Relay."
+  display_name: "Agent & Skill Checkpoint"
+  short_description: "Save or publish agents and individual skills"
+  default_prompt: "Use $agent-workspace-checkpoint to ask whether I want to save the complete agent workspace or one validated skill, then ask whether it should remain private or become intentionally public. Keep agent, private, and a generated local key as safe defaults."

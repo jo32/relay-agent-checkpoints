@@ -59,7 +59,7 @@ def parse_args() -> argparse.Namespace:
         help="Relay checkpoint ID or expiring share URL",
     )
     parser.add_argument("--destination", type=Path, required=True)
-    restore_mode = parser.add_mutually_exclusive_group(required=True)
+    restore_mode = parser.add_mutually_exclusive_group()
     restore_mode.add_argument(
         "--new-workspace",
         action="store_const",
@@ -74,6 +74,13 @@ def parse_args() -> argparse.Namespace:
         dest="restore_mode",
         help="merge into an existing workspace without overwriting conflicts",
     )
+    restore_mode.add_argument(
+        "--install-skill",
+        action="store_const",
+        const="install-skill",
+        dest="restore_mode",
+        help="install a verified skill under the destination skills directory",
+    )
     parser.add_argument("--api-url", default=os.environ.get("RELAY_API_URL"))
     parser.add_argument("--api-token", default=os.environ.get("RELAY_API_TOKEN"))
     parser.add_argument(
@@ -83,7 +90,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--keep-archive", type=Path)
     parser.add_argument("--json", action="store_true", dest="json_output")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.restore_mode is None:
+        parser.error(
+            "one of the arguments --new-workspace --merge is required "
+            "(or use --install-skill for a skill checkpoint)"
+        )
+    return args
 
 
 def main() -> int:
@@ -203,13 +216,44 @@ def main() -> int:
             else checkpoint_id
             or requested_checkpoint_id
         )
+        relay_artifact = relay_metadata.get("artifact")
+        restore_destination = destination
+        if args.restore_mode == "install-skill":
+            if (
+                not isinstance(relay_artifact, dict)
+                or relay_artifact.get("type") != "skill"
+                or not isinstance(relay_artifact.get("skill"), dict)
+            ):
+                raise SystemExit(
+                    "--install-skill requires a Relay skill checkpoint"
+                )
+            skill_name = str(relay_artifact["skill"].get("name", ""))
+            if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,79}", skill_name):
+                raise SystemExit("Relay returned an invalid skill name")
+            restore_destination = (destination / skill_name).resolve()
+            if restore_destination.parent != destination:
+                raise SystemExit("Relay returned an unsafe skill name")
+            if restore_destination.is_symlink():
+                raise SystemExit("Skill destination cannot be a symbolic link")
+            if restore_destination.exists() and not restore_destination.is_dir():
+                raise SystemExit(
+                    f"Skill destination must be a directory: {restore_destination}"
+                )
+            if restore_destination.exists() and any(restore_destination.iterdir()):
+                raise SystemExit(
+                    f"Skill destination must be empty: {restore_destination}"
+                )
         result = restore_archive(
             archive_path,
-            destination,
+            restore_destination,
             merge=args.restore_mode == "merge",
+            install_skill=args.restore_mode == "install-skill",
             expected_checkpoint_id=expected_checkpoint_id,
             public_metadata=(
                 publication if is_public and isinstance(publication, dict) else None
+            ),
+            artifact_metadata=(
+                relay_artifact if isinstance(relay_artifact, dict) else None
             ),
         )
         result.update(
@@ -224,6 +268,7 @@ def main() -> int:
                 "keyFile": str(used_key_file) if used_key_file else None,
                 "agent": relay_metadata.get("agent"),
                 "publication": publication,
+                "artifact": relay_artifact,
             }
         )
         if args.keep_archive:
@@ -254,7 +299,10 @@ def main() -> int:
                 print("Encryption key: entered interactively and not stored.")
         elif result["visibility"] == "public":
             print("Recovery key: not required for this public checkpoint.")
-        print(f"Read the handoff: {result['handoff']}")
+        if result.get("handoff"):
+            print(f"Read the handoff: {result['handoff']}")
+        if result.get("artifactType") == "skill":
+            print(f"Installed skill: {result['skill']['name']}")
         if isinstance(result.get("agent"), dict):
             agent = result["agent"]
             print(
@@ -322,6 +370,7 @@ def download_archive(
             agent = decode_agent_metadata(response.headers)
             if agent:
                 metadata["agent"] = agent
+            metadata["artifact"] = decode_artifact_metadata(response.headers)
             public_format = response.headers.get("x-relay-public-format")
             if public_format:
                 try:
@@ -373,13 +422,39 @@ def decode_publication_metadata(headers) -> dict[str, str]:
     return {"title": title, "description": description}
 
 
+def decode_artifact_metadata(headers) -> dict[str, object]:
+    artifact_type = headers.get("x-relay-artifact-type") or "agent"
+    if artifact_type == "agent":
+        return {"type": "agent", "skill": None}
+    if artifact_type != "skill":
+        raise SystemExit("Relay returned an invalid checkpoint artifact type")
+    encoded_name = headers.get("x-relay-skill-name")
+    encoded_description = headers.get("x-relay-skill-description")
+    if not encoded_name or not encoded_description:
+        raise SystemExit("Relay returned incomplete skill metadata")
+    name = urllib.parse.unquote(encoded_name)
+    description = urllib.parse.unquote(encoded_description)
+    if (
+        not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,79}", name)
+        or not description
+        or len(description) > 1000
+    ):
+        raise SystemExit("Relay returned invalid skill metadata")
+    return {
+        "type": "skill",
+        "skill": {"name": name, "description": " ".join(description.split())},
+    }
+
+
 def restore_archive(
     archive_path: Path,
     destination: Path,
     *,
     merge: bool = False,
+    install_skill: bool = False,
     expected_checkpoint_id: str | None = None,
     public_metadata: dict[str, object] | None = None,
+    artifact_metadata: dict[str, object] | None = None,
 ) -> dict[str, object]:
     seen: set[str] = set()
     windows_paths: dict[str, str] = {}
@@ -441,6 +516,12 @@ def restore_archive(
                 members,
                 public_metadata,
             )
+        manifest_artifact = validate_artifact_manifest(
+            manifest,
+            artifact_metadata,
+        )
+        if install_skill and manifest_artifact["type"] != "skill":
+            raise SystemExit("Only skill checkpoints can use --install-skill")
 
         expected_files = manifest.get("files")
         if not isinstance(expected_files, list):
@@ -475,6 +556,12 @@ def restore_archive(
             if f"sha256:{digest_actual}" != normalize_checksum(digest):
                 raise SystemExit(f"Hash mismatch: {path}")
 
+        if manifest_artifact["type"] == "skill":
+            validate_archived_skill_metadata(
+                archive,
+                manifest_artifact["skill"],
+            )
+
         for member in members:
             name = validate_member_name(member.name)
             if (
@@ -505,6 +592,8 @@ def restore_archive(
         destination.mkdir(parents=True, exist_ok=True)
         for member in members:
             name = validate_member_name(member.name)
+            if install_skill and name.startswith(".agent-checkpoint/"):
+                continue
             target = destination.joinpath(*PurePosixPath(name).parts)
             if member.isdir():
                 target.mkdir(parents=True, exist_ok=True)
@@ -521,13 +610,139 @@ def restore_archive(
             "restored",
         )
 
-    return restore_result(
+    result = restore_result(
         manifest,
         destination,
         len(expected_files),
-        destination / ".agent-checkpoint" / "HANDOFF.md",
-        restore_mode="new",
+        (
+            None
+            if install_skill
+            else destination / ".agent-checkpoint" / "HANDOFF.md"
+        ),
+        restore_mode="install-skill" if install_skill else "new",
     )
+    result.update(
+        {
+            "artifactType": manifest_artifact["type"],
+            "skill": manifest_artifact["skill"],
+        }
+    )
+    return result
+
+
+def validate_artifact_manifest(
+    manifest: dict[str, object],
+    relay_artifact: dict[str, object] | None,
+) -> dict[str, object]:
+    artifact_type = manifest.get("artifactType", "agent")
+    skill = manifest.get("skill")
+    if artifact_type == "agent":
+        artifact = {"type": "agent", "skill": None}
+        if skill is not None:
+            raise SystemExit("Agent checkpoint contains unexpected skill metadata")
+    elif artifact_type == "skill" and isinstance(skill, dict):
+        name = skill.get("name")
+        description = skill.get("description")
+        if (
+            not isinstance(name, str)
+            or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,79}", name)
+            or not isinstance(description, str)
+            or not description.strip()
+            or len(description) > 1000
+        ):
+            raise SystemExit("Skill checkpoint manifest metadata is invalid")
+        artifact = {
+            "type": "skill",
+            "skill": {
+                "name": name,
+                "description": " ".join(description.split()),
+            },
+        }
+    else:
+        raise SystemExit("Checkpoint artifact type is invalid")
+    if relay_artifact is not None and artifact != relay_artifact:
+        raise SystemExit(
+            "Checkpoint artifact metadata does not match Relay metadata"
+        )
+    return artifact
+
+
+def validate_archived_skill_metadata(
+    archive: tarfile.TarFile,
+    expected_skill: object,
+) -> None:
+    if not isinstance(expected_skill, dict):
+        raise SystemExit("Skill checkpoint metadata is missing")
+    try:
+        member = archive.getmember("SKILL.md")
+    except KeyError as error:
+        raise SystemExit("Skill checkpoint is missing its root SKILL.md") from error
+    if not member.isfile() or member.size > 1024 * 1024:
+        raise SystemExit("Skill checkpoint SKILL.md is invalid")
+    source = archive.extractfile(member)
+    if source is None:
+        raise SystemExit("Skill checkpoint SKILL.md is unreadable")
+    try:
+        text = source.read().decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise SystemExit("Skill checkpoint SKILL.md is not UTF-8") from error
+    declared = parse_skill_frontmatter(text)
+    if declared != expected_skill:
+        raise SystemExit(
+            "Skill checkpoint manifest metadata does not match SKILL.md"
+        )
+
+
+def parse_skill_frontmatter(text: str) -> dict[str, str]:
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        raise SystemExit("Skill checkpoint SKILL.md requires YAML frontmatter")
+    try:
+        end = next(
+            index
+            for index, line in enumerate(lines[1:], start=1)
+            if line.strip() == "---"
+        )
+    except StopIteration as error:
+        raise SystemExit("Skill checkpoint SKILL.md frontmatter is not closed") from error
+    fields: dict[str, str] = {}
+    index = 1
+    while index < end:
+        match = re.match(r"^(name|description):\s*(.*)$", lines[index])
+        if not match:
+            index += 1
+            continue
+        key, value = match.groups()
+        if value in {"|", "|-", "|+", ">", ">-", ">+"}:
+            block: list[str] = []
+            index += 1
+            while index < end and (
+                not lines[index].strip() or lines[index][:1].isspace()
+            ):
+                block.append(lines[index].strip())
+                index += 1
+            value = " ".join(part for part in block if part)
+        else:
+            index += 1
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] == '"':
+            try:
+                decoded = json.loads(value)
+                value = decoded if isinstance(decoded, str) else value
+            except json.JSONDecodeError:
+                pass
+        elif len(value) >= 2 and value[0] == value[-1] == "'":
+            value = value[1:-1].replace("''", "'")
+        fields[key] = " ".join(unicodedata.normalize("NFC", value).split())
+    name = fields.get("name", "")
+    description = fields.get("description", "")
+    if (
+        not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,79}", name)
+        or not description
+        or len(description) > 1000
+    ):
+        raise SystemExit("Skill checkpoint SKILL.md metadata is invalid")
+    return {"name": name, "description": description}
 
 
 def validate_public_manifest(
@@ -715,18 +930,21 @@ def restore_result(
     manifest: dict[str, object],
     destination: Path,
     verified_files: int,
-    handoff: Path,
+    handoff: Path | None,
     *,
     restore_mode: str,
 ) -> dict[str, object]:
+    artifact = validate_artifact_manifest(manifest, None)
     return {
         "checkpointId": manifest.get("checkpointId"),
         "workspace": manifest.get("workspace"),
         "destination": str(destination),
         "verifiedFiles": verified_files,
-        "handoff": str(handoff),
+        "handoff": str(handoff) if handoff else None,
         "treeHash": manifest.get("treeHash"),
         "restoreMode": restore_mode,
+        "artifactType": artifact["type"],
+        "skill": artifact["skill"],
     }
 
 

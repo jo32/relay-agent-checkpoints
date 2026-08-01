@@ -3789,6 +3789,20 @@ kbd {
   -webkit-line-clamp: 3;
 }
 
+.marketplace-skill-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: fit-content;
+  margin: 0;
+  padding: 0.28rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-soft);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.72rem;
+}
+
 .marketplace-agent {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr);
@@ -3916,7 +3930,28 @@ kbd {
   margin-top: 7px;
 }
 
-.marketplace-sort {
+.marketplace-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.marketplace-control-group {
+  display: grid;
+  gap: 6px;
+}
+
+.marketplace-control-label {
+  padding-left: 4px;
+  color: #7b847d;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.marketplace-segmented {
   display: inline-flex;
   padding: 3px;
   background: #ecefe9;
@@ -3924,7 +3959,7 @@ kbd {
   border-radius: 8px;
 }
 
-.marketplace-sort button {
+.marketplace-segmented button {
   min-height: 34px;
   display: inline-flex;
   align-items: center;
@@ -3939,7 +3974,7 @@ kbd {
   cursor: pointer;
 }
 
-.marketplace-sort button.active {
+.marketplace-segmented button.active {
   color: #223128;
   background: #fff;
   box-shadow: 0 1px 3px rgba(32, 48, 38, 0.1);
@@ -4213,11 +4248,18 @@ kbd {
     min-height: 0;
   }
 
-  .marketplace-sort {
+  .marketplace-controls {
+    width: 100%;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .marketplace-control-group,
+  .marketplace-segmented {
     width: 100%;
   }
 
-  .marketplace-sort button {
+  .marketplace-segmented button {
     flex: 1;
     justify-content: center;
   }

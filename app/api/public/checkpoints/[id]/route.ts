@@ -18,6 +18,14 @@ export async function GET(
       checkpoint: {
         id: checkpoint.id,
         visibility: "public",
+        artifactType: checkpoint.artifactType,
+        skill:
+          checkpoint.artifactType === "skill"
+            ? {
+                name: checkpoint.skillName,
+                description: checkpoint.skillDescription,
+              }
+            : null,
         agent: {
           name: checkpoint.agentName,
           description: checkpoint.agentDescription,

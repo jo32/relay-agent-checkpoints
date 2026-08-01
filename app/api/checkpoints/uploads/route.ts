@@ -19,6 +19,10 @@ import {
   resolveAgentMetadata,
 } from "@/lib/agent-metadata";
 import {
+  ArtifactMetadataError,
+  resolveArtifactMetadata,
+} from "@/lib/artifact-metadata";
+import {
   PUBLIC_CHECKPOINT_FORMAT_VERSION,
   PublicCheckpointError,
   resolvePublicCheckpointMetadata,
@@ -79,6 +83,7 @@ export async function POST(request: NextRequest) {
   let publicMetadata:
     | ReturnType<typeof resolvePublicCheckpointMetadata>
     | undefined;
+  let artifactMetadata: ReturnType<typeof resolveArtifactMetadata>;
   let sourceCiphertextChecksum: string | null = null;
   if (operation === "create-private") {
     if (encryptionVersion !== 2 || cipher !== "AES-256-GCM") {
@@ -89,8 +94,9 @@ export async function POST(request: NextRequest) {
     }
     try {
       agentMetadata = resolveAgentMetadata(checkpointId, input);
+      artifactMetadata = resolveArtifactMetadata(input);
     } catch (error) {
-      return agentMetadataResponse(error);
+      return checkpointMetadataResponse(error);
     }
     if (await checkpointIdExists(checkpointId)) {
       return NextResponse.json({ error: "This checkpoint already exists." }, { status: 409 });
@@ -120,8 +126,9 @@ export async function POST(request: NextRequest) {
     if (operation === "create-public") {
       try {
         agentMetadata = resolveAgentMetadata(checkpointId, input);
+        artifactMetadata = resolveArtifactMetadata(input);
       } catch (error) {
-        return agentMetadataResponse(error);
+        return checkpointMetadataResponse(error);
       }
       if (await checkpointIdExists(checkpointId)) {
         return NextResponse.json({ error: "This checkpoint already exists." }, { status: 409 });
@@ -165,6 +172,11 @@ export async function POST(request: NextRequest) {
         agentDescription: source.agentDescription,
         agentMetadataMode: source.agentMetadataMode,
       };
+      artifactMetadata = {
+        artifactType: source.artifactType,
+        skillName: source.skillName,
+        skillDescription: source.skillDescription,
+      };
     }
   }
 
@@ -185,6 +197,7 @@ export async function POST(request: NextRequest) {
     encryptionVersion: operation === "create-private" ? 2 : 0,
     cipher: operation === "create-private" ? "AES-256-GCM" : "none",
     ...agentMetadata,
+    ...artifactMetadata,
     ...(publicMetadata
       ? {
           ...publicMetadata,
@@ -225,6 +238,14 @@ export async function POST(request: NextRequest) {
         description: session.agentDescription,
         mode: session.agentMetadataMode,
       },
+      artifactType: session.artifactType ?? "agent",
+      skill:
+        session.artifactType === "skill"
+          ? {
+              name: session.skillName,
+              description: session.skillDescription,
+            }
+          : null,
       ...(publicMetadata
         ? {
             publication: {
@@ -241,8 +262,8 @@ export async function POST(request: NextRequest) {
   );
 }
 
-function agentMetadataResponse(error: unknown) {
-  if (error instanceof AgentMetadataError) {
+function checkpointMetadataResponse(error: unknown) {
+  if (error instanceof AgentMetadataError || error instanceof ArtifactMetadataError) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
   throw error;

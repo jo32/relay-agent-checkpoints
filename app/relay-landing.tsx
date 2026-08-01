@@ -90,13 +90,13 @@ export function RelayLanding() {
               Private by default · public by choice
             </p>
             <h1 id="landing-title">
-              Workspace checkpoints
+              Agent and skill checkpoints
               <span>private or public.</span>
             </h1>
             <p className="hero-lede">
-              Keep a checkpoint as locally encrypted ciphertext, or deliberately
-              publish a separately sanitized artifact for stable, anonymous,
-              keyless restore. You choose the boundary.
+              Save an entire agent workspace or one reusable skill as locally
+              encrypted ciphertext, or deliberately publish a separately sanitized
+              artifact for stable, anonymous, keyless restore. You choose the boundary.
             </p>
 
             <div className="hero-actions">
@@ -225,7 +225,7 @@ export function RelayLanding() {
             <p className="landing-kicker">A deliberate visibility boundary</p>
             <h2 id="how-title">One workflow, two clear choices.</h2>
             <p>
-              Every checkpoint is filtered and verified locally. Private artifacts
+              Every agent workspace or skill checkpoint is filtered and verified locally. Private artifacts
               remain encrypted; public artifacts are readable by design.
             </p>
           </div>
@@ -237,7 +237,7 @@ export function RelayLanding() {
               <p className="journey-status free">On your machine</p>
               <h3>Sanitize at the source</h3>
               <p>
-                Relay&rsquo;s skill selects the workspace state and excludes secrets,
+                Relay&rsquo;s skill selects the workspace or target skill and excludes secrets,
                 unsafe paths, caches, dependencies, and other disposable data.
               </p>
             </article>

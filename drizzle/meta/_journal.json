@@ -50,6 +50,13 @@
       "when": 1784817175113,
       "tag": "0006_busy_reavers",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1785602405147,
+      "tag": "0007_cultured_slyde",
+      "breakpoints": true
     }
   ]
 }

@@ -8,6 +8,7 @@ import {
   PUBLIC_CHECKPOINT_CONTENT_TYPE,
   PUBLIC_CHECKPOINT_FORMAT_VERSION,
 } from "@/lib/public-checkpoint";
+import { artifactMetadataHeaders } from "@/lib/artifact-metadata";
 
 export const dynamic = "force-dynamic";
 
@@ -51,6 +52,7 @@ export async function GET(
       ),
       "x-relay-public-title": encodeURIComponent(publication.title),
       "x-relay-public-description": encodeURIComponent(publication.description),
+      ...artifactMetadataHeaders(checkpoint),
       "cache-control": "public, max-age=31536000, immutable",
       "x-content-type-options": "nosniff",
     },

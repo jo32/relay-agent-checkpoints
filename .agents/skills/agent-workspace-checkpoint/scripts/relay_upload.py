@@ -23,6 +23,7 @@ def upload_checkpoint(
     checkpoint_id: str,
     checksum: str,
     agent_metadata: dict[str, str] | None,
+    artifact_metadata: dict[str, object] | None = None,
     operation: str = "create-private",
     public_metadata: dict[str, str] | None = None,
     source_ciphertext_checksum: str | None = None,
@@ -50,6 +51,12 @@ def upload_checkpoint(
         raise RelayUploadError("Source checksum is valid only when publishing")
     if operation != "publish-existing" and not agent_metadata:
         raise RelayUploadError("Checkpoint upload requires agent metadata")
+    if operation != "publish-existing" and not artifact_metadata:
+        artifact_metadata = {
+            "artifactType": "agent",
+            "skillName": None,
+            "skillDescription": None,
+        }
 
     endpoint = api_url.rstrip("/")
     size_bytes = archive_path.stat().st_size
@@ -69,6 +76,8 @@ def upload_checkpoint(
                 "agentMetadataMode": agent_metadata["mode"],
             }
         )
+    if artifact_metadata and operation != "publish-existing":
+        payload.update(artifact_metadata)
     if public_metadata:
         payload.update(
             {
@@ -165,6 +174,20 @@ def upload_checkpoint(
                 or publication.get("description")
                 != public_metadata["description"]
                 or (
+                    artifact_metadata is not None
+                    and (verified_checkpoint.get("artifactType") or "agent")
+                    != artifact_metadata["artifactType"]
+                )
+                or (
+                    artifact_metadata is not None
+                    and artifact_metadata["artifactType"] == "skill"
+                    and verified_checkpoint.get("skill")
+                    != {
+                        "name": artifact_metadata["skillName"],
+                        "description": artifact_metadata["skillDescription"],
+                    }
+                )
+                or (
                     operation == "publish-existing"
                     and str(
                         publication.get("sourceCiphertextChecksum", "")
@@ -193,6 +216,16 @@ def upload_checkpoint(
             != agent_metadata["description"]
             or verified_checkpoint.get("agentMetadataMode")
             != agent_metadata["mode"]
+            or (verified_checkpoint.get("artifactType") or "agent")
+            != artifact_metadata["artifactType"]
+            or (
+                artifact_metadata["artifactType"] == "skill"
+                and verified_checkpoint.get("skill")
+                != {
+                    "name": artifact_metadata["skillName"],
+                    "description": artifact_metadata["skillDescription"],
+                }
+            )
         ):
             raise RelayUploadError("Relay API could not verify the stored checkpoint")
         completed["upload"] = {

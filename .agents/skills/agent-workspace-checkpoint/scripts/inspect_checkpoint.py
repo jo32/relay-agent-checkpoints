@@ -146,6 +146,8 @@ def main() -> int:
         "checkpointId": manifest.get("checkpointId"),
         "workspace": manifest.get("workspace"),
         "sourceAgent": manifest.get("sourceAgent"),
+        "artifactType": manifest.get("artifactType", "agent"),
+        "skill": manifest.get("skill"),
         "treeHash": manifest.get("treeHash"),
         "publication": manifest.get("publication"),
         "stacks": manifest.get("stacks", []),

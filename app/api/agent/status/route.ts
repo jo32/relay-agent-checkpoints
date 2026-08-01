@@ -17,6 +17,12 @@ export async function GET(request: NextRequest) {
       connected: true,
       scopes: credential.scopes,
       checkpointCount: checkpoints.length,
+      agentCheckpointCount: checkpoints.filter(
+        (checkpoint) => checkpoint.artifactType === "agent",
+      ).length,
+      skillCheckpointCount: checkpoints.filter(
+        (checkpoint) => checkpoint.artifactType === "skill",
+      ).length,
     },
     { headers: { "cache-control": "no-store" } },
   );

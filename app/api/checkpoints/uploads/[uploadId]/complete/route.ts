@@ -14,6 +14,7 @@ import {
 } from "@/db/checkpoints";
 import {
   claimUploadCompletion,
+  checkpointArtifactMetadata,
   checkpointUploadOperation,
   ChunkedCheckpointManifest,
   completionLeaseRetryAfterSeconds,
@@ -69,6 +70,7 @@ export async function POST(
   }
 
   const operation = checkpointUploadOperation(session);
+  const artifactMetadata = checkpointArtifactMetadata(session);
   const idempotent = await completedCheckpoint(session, credential.tenantId);
   if (session.status === "completed") {
     if (idempotent && publicationMatchesSession(idempotent, session)) {
@@ -157,6 +159,9 @@ export async function POST(
         checkpointId: session.checkpointId,
         title: session.publicTitle!,
         description: session.publicDescription!,
+        artifactType: artifactMetadata.artifactType,
+        skillName: artifactMetadata.skillName,
+        skillDescription: artifactMetadata.skillDescription,
       },
     );
     if (!validArchive) {
@@ -253,6 +258,7 @@ export async function POST(
   const manifest: ChunkedCheckpointManifest = {
     version: 1,
     checkpointId: session.checkpointId,
+    ...artifactMetadata,
     sizeBytes: session.sizeBytes,
     chunks: validated.chunks,
   };
@@ -296,6 +302,10 @@ export async function POST(
           cipher: session.cipher,
           encryptionVersion: String(session.encryptionVersion),
           operation,
+          artifactType: artifactMetadata.artifactType,
+          ...(artifactMetadata.artifactType === "skill"
+            ? { skillName: artifactMetadata.skillName! }
+            : {}),
           ...(publicUpload
             ? {
                 contentType: "application/vnd.relay.public-checkpoint+gzip",
@@ -431,14 +441,21 @@ function publicationMatchesSession(
   session: Parameters<typeof checkpointUploadOperation>[0],
 ) {
   const operation = checkpointUploadOperation(session);
+  const artifactMetadata = checkpointArtifactMetadata(session);
+  const artifactMatches =
+    checkpoint.artifactType === artifactMetadata.artifactType &&
+    checkpoint.skillName === artifactMetadata.skillName &&
+    checkpoint.skillDescription === artifactMetadata.skillDescription;
   if (operation === "create-private") {
     return (
+      artifactMatches &&
       checkpoint.visibility === "private" &&
       checkpoint.objectKey === session.objectKey &&
       checkpoint.checksum.toLowerCase() === session.checksum.toLowerCase()
     );
   }
   return (
+    artifactMatches &&
     checkpoint.publication?.checksum.toLowerCase() === session.checksum.toLowerCase() &&
     checkpoint.publication.title === session.publicTitle &&
     checkpoint.publication.description === session.publicDescription &&
@@ -453,6 +470,7 @@ function privateCheckpointRecord(
   session: Parameters<typeof checkpointUploadOperation>[0],
   createdAt: string,
 ): StoredCheckpointRecord {
+  const artifact = checkpointArtifactMetadata(session);
   return {
     id: session.checkpointId,
     ownerKey: session.tenantId,
@@ -461,6 +479,7 @@ function privateCheckpointRecord(
     workspaceName: "Private workspace",
     label: "Encrypted checkpoint",
     sourceAgent: "Local checkpoint skill",
+    ...artifact,
     agentName: session.agentName,
     agentDescription: session.agentDescription,
     agentMetadataMode: session.agentMetadataMode,
@@ -482,6 +501,7 @@ function directPublicCheckpointRecord(
   session: Parameters<typeof checkpointUploadOperation>[0],
   createdAt: string,
 ): StoredCheckpointRecord {
+  const artifact = checkpointArtifactMetadata(session);
   return {
     id: session.checkpointId,
     ownerKey: session.tenantId,
@@ -490,6 +510,7 @@ function directPublicCheckpointRecord(
     workspaceName: "Public workspace",
     label: session.publicTitle ?? "Public checkpoint",
     sourceAgent: "Local checkpoint skill",
+    ...artifact,
     agentName: session.agentName,
     agentDescription: session.agentDescription,
     agentMetadataMode: session.agentMetadataMode,
