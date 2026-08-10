@@ -393,6 +393,10 @@ test("leads with Relay's explicit private and public security boundary", async (
     new URL("../app/relay-landing.tsx", import.meta.url),
     "utf8",
   );
+  const relayPromptSource = await readFile(
+    new URL("../lib/relay-skill-prompts.ts", import.meta.url),
+    "utf8",
+  );
   const principalSource = await readFile(
     new URL("../lib/principal.ts", import.meta.url),
     "utf8",
@@ -405,7 +409,7 @@ test("leads with Relay's explicit private and public security boundary", async (
   assert.match(landingSource, /Private by default/);
   assert.match(landingSource, /private or public/);
   assert.match(landingSource, /Install Relay skills/);
-  assert.match(landingSource, /relay-checkpoint-skills\.zip/);
+  assert.match(relayPromptSource, /relay-checkpoint-skills\.zip/);
   assert.match(landingSource, /Private checkpoints are sealed locally/);
   assert.match(landingSource, /Public is intentionally readable/);
   assert.match(landingSource, /AES-256-GCM/);
@@ -413,7 +417,7 @@ test("leads with Relay's explicit private and public security boundary", async (
   assert.match(landingSource, /Restore with proof/);
   assert.match(landingSource, /Publication is effectively irreversible/);
   assert.doesNotMatch(landingSource, /Install without login|Sign in to upload|Login required/);
-  assert.match(landingSource, /Do not sign in, connect an account/);
+  assert.match(relayPromptSource, /Do not sign in, connect an account/);
   assert.match(landingSource, /approved\s+or pseudonymous agent metadata/);
   assert.match(landingSource, /Shared or pseudonymous, independently/);
   assert.match(
@@ -432,12 +436,28 @@ test("agent-operated skill prompts are copy-ready", async () => {
     new URL("../app/relay-dashboard.tsx", import.meta.url),
     "utf8",
   );
-  assert.match(source, /Install or update Relay's checkpoint skills in this project\. No Relay sign-in is needed for installation or updates/);
-  assert.match(source, /relay-checkpoint-skills\.zip/);
-  assert.match(source, /skillChecksumUrl = `\$\{skillBundleUrl\}\.sha256`/);
-  assert.match(source, /Stop after installation\. Do not sign in, connect an account/);
+  const marketplaceSource = await readFile(
+    new URL("../app/marketplace/marketplace-client.tsx", import.meta.url),
+    "utf8",
+  );
+  const relayPromptSource = await readFile(
+    new URL("../lib/relay-skill-prompts.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(relayPromptSource, /Install or update Relay's checkpoint skills in this project\. No Relay sign-in is needed for installation or updates/);
+  assert.match(relayPromptSource, /relay-checkpoint-skills\.zip/);
+  assert.match(relayPromptSource, /skillChecksumUrl = `\$\{skillBundleUrl\}\.sha256`/);
+  assert.match(relayPromptSource, /Stop after installation\. Do not sign in, connect an account/);
   assert.match(source, /Use \$agent-workspace-checkpoint to create and upload/);
   assert.match(source, /Use \$restore-agent-workspace to download Relay checkpoint/);
+  assert.match(source, /restoreSkillPrerequisitePrompt\(window\.location\.origin\)/);
+  assert.match(marketplaceSource, /restoreSkillPrerequisitePrompt\(window\.location\.origin\)/);
+  assert.match(marketplaceSource, /Use \$restore-agent-workspace to install this intentionally public Relay skill checkpoint/);
+  assert.match(marketplaceSource, /run the restore command with --install-skill/);
+  assert.match(relayPromptSource, /install or update the complete Relay skill bundle below/);
+  assert.match(relayPromptSource, /both \$agent-workspace-checkpoint and \$restore-agent-workspace skill directories are installed and current/);
+  assert.match(relayPromptSource, /Verify the ZIP against the published SHA-256 checksum/);
+  assert.match(relayPromptSource, /Then continue with the checkpoint installation below/);
   assert.match(source, /ask whether I want to merge it into the current agent workspace/);
   assert.match(source, /Do not default to either mode/);
   assert.match(source, /Run all commands yourself/);

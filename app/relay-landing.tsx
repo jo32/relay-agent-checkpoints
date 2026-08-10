@@ -14,26 +14,9 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
+import { relaySkillsInstallPrompt } from "../lib/relay-skill-prompts";
 
 const INSTALL_PROMPT_LABEL = "Create a private Relay checkpoint of this workspace.";
-
-function installPrompt(origin: string) {
-  const bundleUrl = `${origin}/skills/relay-checkpoint-skills.zip`;
-  const checksumUrl = `${bundleUrl}.sha256`;
-
-  return `Install or update Relay's checkpoint skills in this project. No Relay sign-in is needed for installation or updates.
-
-Relay URL: ${origin}
-
-1. Download ${bundleUrl} and ${checksumUrl} yourself. Do not ask me to download either file.
-2. Verify the ZIP against the published SHA-256 checksum before opening it.
-3. Inspect the archive. It must contain only these two skill folders under .agents/skills/:
-   - agent-workspace-checkpoint
-   - restore-agent-workspace
-4. Install or update only those folders in this project. Preserve unrelated skills, and ask before replacing locally modified Relay skill files.
-5. Read both SKILL.md files.
-6. Stop after installation. Do not sign in, connect an account, create a checkpoint, upload, download, decrypt, or restore anything yet.`;
-}
 
 export function RelayLanding() {
   const [copied, setCopied] = useState(false);
@@ -42,7 +25,7 @@ export function RelayLanding() {
   async function copyInstallPrompt() {
     const origin = window.location.origin;
     try {
-      await navigator.clipboard.writeText(installPrompt(origin));
+      await navigator.clipboard.writeText(relaySkillsInstallPrompt(origin));
       setCopyError(false);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2200);
